@@ -7,20 +7,20 @@ Please see LICENSE files in the repository root for full details.
 
 import { execFileSync, execSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
-import { dirname, join } from "node:path";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const callRevision = "71593f1a245b1afa971e3940596e1c500edf9548";
 const sdkRevision = "24929be0e741be6a5d0a7226f1c682e245263b8a"; // Element Call's frozen lockfile
 const root = fileURLToPath(new URL("../../../", import.meta.url));
-const cache = join(root, ".tmp");
+const cache = path.join(root, ".tmp");
 mkdirSync(cache, { recursive: true });
-const buildRoot = mkdtempSync(join(cache, "babacom-call-widget-"));
-const call = join(buildRoot, "element-call");
-const sdk = join(buildRoot, "matrix-js-sdk");
+const buildRoot = mkdtempSync(path.join(cache, "babacom-call-widget-"));
+const call = path.join(buildRoot, "element-call");
+const sdk = path.join(buildRoot, "matrix-js-sdk");
 
 checkout("https://github.com/element-hq/element-call.git", callRevision, call);
-const patch = join(root, "patches", "babacom-element-call-v0.26.0.patch");
+const patch = path.join(root, "patches", "babacom-element-call-v0.26.0.patch");
 run("git", ["apply", "--check", patch], call);
 run("git", ["apply", patch], call);
 
@@ -36,7 +36,7 @@ run(
     ["node_modules/typescript/bin/tsc6", "--project", "tsconfig-build.json", "--emitDeclarationOnly"],
     sdk,
 );
-cpSync(join(sdk, "lib"), join(call, "node_modules", "matrix-js-sdk", "lib"), { recursive: true });
+cpSync(path.join(sdk, "lib"), path.join(call, "node_modules", "matrix-js-sdk", "lib"), { recursive: true });
 
 run(process.execPath, ["node_modules/vite/bin/vite.js", "build", "--config", "vite-embedded.config.ts"], call, {
     ...process.env,
@@ -44,8 +44,8 @@ run(process.execPath, ["node_modules/vite/bin/vite.js", "build", "--config", "vi
     VITE_APP_VERSION: "embedded-v0.26.0-babacom",
 });
 
-const dist = join(call, "dist");
-if (!existsSync(join(dist, "index.html"))) throw new Error("The Element Call build did not produce index.html");
+const dist = path.join(call, "dist");
+if (!existsSync(path.join(dist, "index.html"))) throw new Error("The Element Call build did not produce index.html");
 console.log(`BABACOM_CALL_WIDGET_DIR=${dist}`);
 
 function checkout(remote, revision, destination) {
@@ -70,7 +70,13 @@ function install(cwd, packageManager = "pnpm") {
         return;
     }
 
-    const bundledCorepack = join(dirname(process.execPath), "node_modules", "corepack", "dist", "corepack.js");
+    const bundledCorepack = path.join(
+        path.dirname(process.execPath),
+        "node_modules",
+        "corepack",
+        "dist",
+        "corepack.js",
+    );
     if (existsSync(bundledCorepack)) {
         run(process.execPath, [bundledCorepack, ...args], cwd, env);
     } else {

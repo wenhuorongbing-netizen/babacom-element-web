@@ -186,7 +186,9 @@ export default class DesktopCapturerSourcePicker extends React.Component<PickerI
                     onChange={this.onTabChange}
                 />
                 {elementCallRoomName !== undefined && this.state.selectedSource && (
-                    <p role="status">{_t("voip|screenshare_selected_source", { sourceName: this.state.selectedSource.name })}</p>
+                    <p role="status">
+                        {_t("voip|screenshare_selected_source", { sourceName: this.state.selectedSource.name })}
+                    </p>
                 )}
                 {this.props.canShareSystemAudio === true && (
                     <StyledCheckbox
@@ -197,7 +199,9 @@ export default class DesktopCapturerSourcePicker extends React.Component<PickerI
                     </StyledCheckbox>
                 )}
                 <DialogButtons
-                    primaryButton={elementCallRoomName !== undefined ? _t("voip|screenshare_confirm") : _t("action|share")}
+                    primaryButton={
+                        elementCallRoomName !== undefined ? _t("voip|screenshare_confirm") : _t("action|share")
+                    }
                     hasCancel={true}
                     onCancel={this.onCloseClick}
                     onPrimaryButtonClick={this.onShare}

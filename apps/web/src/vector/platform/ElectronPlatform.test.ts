@@ -301,11 +301,14 @@ describe("ElectronPlatform", () => {
             try {
                 const [, openPicker] = getElectronEventHandlerCall("openDesktopCapturerSourcePicker")!;
                 const [, reply] = getElectronEventHandlerCall("ipcReply")!;
-                openPicker({}, {
-                    requestId: "request-a",
-                    canShareSystemAudio: true,
-                    elementCallRoomId: call.roomId,
-                });
+                openPicker(
+                    {},
+                    {
+                        requestId: "request-a",
+                        canShareSystemAudio: true,
+                        elementCallRoomId: call.roomId,
+                    },
+                );
                 await waitFor(() => expect(mockElectron.send).toHaveBeenCalledTimes(1));
 
                 getActiveCall.mockReturnValue(undefined);

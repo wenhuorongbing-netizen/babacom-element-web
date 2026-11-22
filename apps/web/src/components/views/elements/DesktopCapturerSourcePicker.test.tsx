@@ -124,7 +124,13 @@ describe("DesktopCapturerSourcePicker", () => {
 
     it("names the call and source at confirmation and leaves system audio off", async () => {
         const onFinished = vi.fn();
-        render(<DesktopCapturerSourcePicker elementCallRoomName="Team voice" canShareSystemAudio onFinished={onFinished} />);
+        render(
+            <DesktopCapturerSourcePicker
+                elementCallRoomName="Team voice"
+                canShareSystemAudio
+                onFinished={onFinished}
+            />,
+        );
         const shareButton = screen.getByRole("button", { name: "Share screen" });
         expect(shareButton).toBeDisabled();
         expect(screen.getByText("Sharing to Team voice")).toBeInTheDocument();
