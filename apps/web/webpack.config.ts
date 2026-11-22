@@ -659,6 +659,8 @@ export default (env: string, argv: Record<string, any>): webpack.Configuration =
                     "res/jitsi_external_api.min.js",
                     "res/jitsi_external_api.min.js.LICENSE.txt",
                     "res/manifest.json",
+                    // BabaCom string overrides, loaded through config.json's custom_translations_url
+                    "res/babacom-translations.json",
                     { from: "themes/**", context: path.resolve(__dirname, "res") },
                     { from: "vector-icons/**", context: path.resolve(__dirname, "res") },
                     { from: "decoder-ring/**", context: path.resolve(__dirname, "res") },

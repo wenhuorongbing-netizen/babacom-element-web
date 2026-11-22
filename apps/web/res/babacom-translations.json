@@ -1,0 +1,68 @@
+{
+    "auth|account_server": {
+        "zh-hans": "账户服务器"
+    },
+    "auth|change_account_server": {
+        "zh-hans": "更改账户服务器"
+    },
+    "auth|continue_signing_in": {
+        "zh-hans": "继续登录"
+    },
+    "auth|server_picker_custom": {
+        "zh-hans": "其他账户服务器"
+    },
+    "auth|server_picker_intro": {
+        "zh-hans": "账户服务器托管你的 Matrix 账户。请选择服务器，或输入其他地址。"
+    },
+    "auth|server_picker_invalid_url": {
+        "zh-hans": "请输入完整账户服务器地址，例如 https://example.org。"
+    },
+    "auth|server_picker_title": {
+        "zh-hans": "选择账户服务器"
+    },
+    "voip|microphone_change_failed": {
+        "zh-hans": "未能切换麦克风。请在通话中检查设备。"
+    },
+    "voip|microphone_off": {
+        "zh-hans": "麦克风已静音"
+    },
+    "voip|microphone_on": {
+        "zh-hans": "麦克风已开启"
+    },
+    "voip|microphone_pending": {
+        "zh-hans": "正在切换麦克风…"
+    },
+    "voip|microphone_state_unknown": {
+        "zh-hans": "麦克风状态未知"
+    },
+    "voip|screenshare_confirm": {
+        "zh-hans": "共享屏幕"
+    },
+    "voip|screenshare_destination": {
+        "zh-hans": "共享到「%(roomName)s」"
+    },
+    "voip|screenshare_selected_source": {
+        "zh-hans": "已选来源 %(sourceName)s"
+    },
+    "voip|screenshare_system_audio": {
+        "zh-hans": "共享这台电脑的系统声音"
+    },
+    "voip|voice_bar_browser_notice": {
+        "zh-hans": "浏览器版的系统声音共享受浏览器支持限制；若无法共享声音，可仅共享画面。"
+    },
+    "voip|voice_bar_connected": {
+        "zh-hans": "语音已连接"
+    },
+    "voip|voice_bar_disconnect_failed": {
+        "zh-hans": "未能离开语音。请重试。"
+    },
+    "voip|voice_bar_disconnecting": {
+        "zh-hans": "正在离开语音…"
+    },
+    "voip|voice_bar_leave": {
+        "zh-hans": "离开语音"
+    },
+    "voip|voice_bar_open_to_share": {
+        "zh-hans": "前往通话共享屏幕"
+    }
+}

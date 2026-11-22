@@ -13,6 +13,10 @@ The embedded configuration targets `http://127.0.0.1:18008` (`proof.babacom.test
 Voice and widgets are enabled. Registration, guests and external integrations are disabled.
 Element Call is bundled locally and needs the dedicated Matrix and RTC services for calls.
 
+That configuration is tracked as `apps/web/config.babacom.json`; copy it to `apps/web/config.json` before building.
+It also loads BabaCom's Chinese strings from `apps/web/res/babacom-translations.json`. Keep BabaCom strings there, not in
+`src/i18n/strings/`, whose non-English files come from Element's translation service.
+
 Once the dedicated test service is restored, start each test account in a separate profile:
 
 ```powershell
