@@ -9,7 +9,7 @@ import { expect, describe, it, beforeEach, afterEach, vi } from "vitest";
 import { desktopCapturer, nativeImage, TouchBar } from "electron";
 
 import { getConfig } from "./config.js";
-import { consumeDisplayMediaCallback } from "./displayMediaCallback.js";
+import { setDisplayMediaCallback } from "./displayMediaCallback.js";
 import { clearData } from "./store.js";
 
 const { ipcHandlers, mockStore, send, randomArray } = vi.hoisted(() => ({
@@ -55,9 +55,6 @@ vi.mock("./store.js", () => ({
     SafeStorageDecryptionError: class SafeStorageDecryptionError extends Error {},
 }));
 vi.mock("./utils.js", () => ({ randomArray }));
-vi.mock("./displayMediaCallback.js", () => ({
-    consumeDisplayMediaCallback: vi.fn(),
-}));
 vi.mock("./config.js");
 
 await import("./ipc.js");
@@ -222,28 +219,130 @@ describe("ipcCall: breadcrumbs", () => {
 });
 
 describe("ipcCall: callDisplayMediaCallback", () => {
+    const source = { id: "screen:1", name: "Screen 1", thumbnail: { toDataURL: () => "data:thumb" } };
+    const canceled = { video: { id: "", name: "" } };
+    const trustedRoomId = "!room:example.org";
+
     beforeEach(() => {
         vi.clearAllMocks();
-        vi.mocked(consumeDisplayMediaCallback).mockReset();
+        setDisplayMediaCallback(null);
+        vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+        vi.mocked(desktopCapturer.getSources).mockResolvedValue([source] as never);
         (global as unknown as { mainWindow: unknown }).mainWindow = { webContents: { send } };
     });
 
-    it("invokes the consumed callback once with the chosen video source", async () => {
-        const callback = vi.fn();
-        vi.mocked(consumeDisplayMediaCallback).mockReturnValue(callback);
-
-        await callIpc("callDisplayMediaCallback", 13, [{ id: "screen:1" }]);
-
-        expect(consumeDisplayMediaCallback).toHaveBeenCalledTimes(1);
-        expect(callback).toHaveBeenCalledWith({ video: { id: "screen:1" } });
-        expect(send).toHaveBeenCalledWith("ipcReply", { id: 13, reply: null });
+    afterEach(() => {
+        setDisplayMediaCallback(null);
+        vi.restoreAllMocks();
     });
 
-    it("is a safe no-op when a stale or duplicate IPC finds no pending callback", async () => {
-        vi.mocked(consumeDisplayMediaCallback).mockReturnValue(null);
+    it.each([true, false, undefined, "true", 1])(
+        "only grants system audio for explicit true consent: %s",
+        async (consent) => {
+            const callback = vi.fn();
+            const request = setDisplayMediaCallback(callback, true, trustedRoomId)!;
+            await callIpc("callDisplayMediaCallback", 13, [{ ...request, source, shareSystemAudio: consent }]);
 
-        await callIpc("callDisplayMediaCallback", 14, [{}]);
+            expect(callback).toHaveBeenCalledExactlyOnceWith(
+                consent === true ? { video: source, audio: "loopback" } : { video: source },
+            );
+            expect(send).toHaveBeenCalledWith("ipcReply", { id: 13, reply: null });
+        },
+    );
 
+    it("does not grant audio for a forged IPC selection without a trusted room", async () => {
+        const callback = vi.fn();
+        const request = setDisplayMediaCallback(callback, true)!;
+        await callIpc("callDisplayMediaCallback", 13, [
+            {
+                ...request,
+                source,
+                shareSystemAudio: true,
+                canShareSystemAudio: true,
+                elementCallRoomId: trustedRoomId,
+            },
+        ]);
+
+        expect(callback).toHaveBeenCalledExactlyOnceWith({ video: source });
+    });
+
+    it.each([
+        ["win32", false],
+        ["darwin", true],
+        ["linux", true],
+    ] as const)("does not grant audio on %s with original audioRequested=%s", async (platform, audioRequested) => {
+        vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+        const callback = vi.fn();
+        const request = setDisplayMediaCallback(callback, audioRequested, trustedRoomId)!;
+        await callIpc("callDisplayMediaCallback", 13, [
+            { ...request, source, shareSystemAudio: true, canShareSystemAudio: true },
+        ]);
+
+        expect(callback).toHaveBeenCalledExactlyOnceWith({ video: source });
+    });
+
+    it.each([undefined, null, {}, { id: "" }, { id: 1 }, { id: "screen:missing" }])(
+        "rejects a canceled or invalid source without audio: %j",
+        async (invalidSource) => {
+            const callback = vi.fn();
+            const request = setDisplayMediaCallback(callback, true, trustedRoomId)!;
+            await callIpc("callDisplayMediaCallback", 13, [
+                { ...request, source: invalidSource, shareSystemAudio: true },
+            ]);
+
+            expect(callback).toHaveBeenCalledExactlyOnceWith(canceled);
+        },
+    );
+
+    it("resolves duplicate replies only once", async () => {
+        const callback = vi.fn();
+        const request = setDisplayMediaCallback(callback, true, trustedRoomId)!;
+        const selection = { ...request, source, shareSystemAudio: true };
+        await callIpc("callDisplayMediaCallback", 13, [selection]);
+        await callIpc("callDisplayMediaCallback", 14, [selection]);
+
+        expect(callback).toHaveBeenCalledExactlyOnceWith({ video: source, audio: "loopback" });
         expect(send).toHaveBeenCalledWith("ipcReply", { id: 14, reply: null });
+    });
+
+    it("does not let a late previous reply or malformed ID consume the current request", async () => {
+        const firstCallback = vi.fn();
+        const first = setDisplayMediaCallback(firstCallback, true)!;
+        const secondCallback = vi.fn();
+        const second = setDisplayMediaCallback(secondCallback, true)!;
+        await callIpc("callDisplayMediaCallback", 13, [{ ...first, source, shareSystemAudio: true }]);
+        await callIpc("callDisplayMediaCallback", 14, [{ source, shareSystemAudio: true }]);
+
+        expect(firstCallback).toHaveBeenCalledExactlyOnceWith(canceled);
+        expect(secondCallback).not.toHaveBeenCalled();
+        await callIpc("callDisplayMediaCallback", 15, [{ ...second, source, shareSystemAudio: false }]);
+        expect(secondCallback).toHaveBeenCalledExactlyOnceWith({ video: source });
+    });
+
+    it("does not grant an older request that is superseded while validating sources", async () => {
+        const sources = Promise.withResolvers<Electron.DesktopCapturerSource[]>();
+        vi.mocked(desktopCapturer.getSources).mockReturnValue(sources.promise);
+        const firstCallback = vi.fn();
+        const first = setDisplayMediaCallback(firstCallback, true)!;
+        const pendingReply = callIpc("callDisplayMediaCallback", 13, [{ ...first, source, shareSystemAudio: true }]);
+        const secondCallback = vi.fn();
+        const second = setDisplayMediaCallback(secondCallback, true)!;
+        sources.resolve([source] as never);
+        await pendingReply;
+
+        expect(firstCallback).toHaveBeenCalledExactlyOnceWith(canceled);
+        expect(secondCallback).not.toHaveBeenCalled();
+        await callIpc("callDisplayMediaCallback", 14, [{ ...second, source, shareSystemAudio: false }]);
+        expect(secondCallback).toHaveBeenCalledExactlyOnceWith({ video: source });
+    });
+
+    it("rejects the request when source enumeration fails", async () => {
+        vi.spyOn(console, "error").mockImplementation(() => {});
+        vi.mocked(desktopCapturer.getSources).mockRejectedValue(new Error("native failure"));
+        const callback = vi.fn();
+        const request = setDisplayMediaCallback(callback, true)!;
+        await callIpc("callDisplayMediaCallback", 13, [{ ...request, source, shareSystemAudio: true }]);
+
+        expect(callback).toHaveBeenCalledExactlyOnceWith(canceled);
     });
 });

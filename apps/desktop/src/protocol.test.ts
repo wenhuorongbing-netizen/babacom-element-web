@@ -5,7 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only OR LicenseRef-Element-Com
 Please see LICENSE files in the repository root for full details.
 */
 
-import { expect, describe, it, beforeEach, vi } from "vitest";
+import { expect, describe, it, beforeEach, afterEach, vi } from "vitest";
 import { fs as memfs, vol } from "memfs";
 import EventEmitter from "node:events";
 import { app } from "electron";
@@ -169,5 +169,75 @@ describe("ProtocolHandler", () => {
 
             expect(global.mainWindow!.loadURL).toHaveBeenCalledWith("vector://vector/webapp/#/room/#matrix:matrix.org");
         });
+    });
+});
+
+describe("isolated candidate protocol handling", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+        vi.clearAllMocks();
+        vol.fromJSON({ "./sso-sessions.json": JSON.stringify({ [TEST_SESSION_ID]: USER_DATA_DIR }) }, USER_DATA_DIR);
+        vi.stubGlobal("mainWindow", { loadURL: vi.fn() });
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+        app.removeAllListeners();
+    });
+
+    it("does not read the default SSO store during construction", () => {
+        const before = vol.toJSON();
+        const read = vi.spyOn(memfs, "readFileSync");
+        new ProtocolHandler(TEST_PROTOCOL, true);
+        expect(read).not.toHaveBeenCalled();
+        expect(vol.toJSON()).toEqual(before);
+    });
+
+    it("retains the ordinary constructor store read", () => {
+        const read = vi.spyOn(memfs, "readFileSync");
+        new ProtocolHandler(TEST_PROTOCOL);
+        expect(read).toHaveBeenCalledOnce();
+    });
+
+    it("ignores positional SSO URLs without registering protocols or updating the default store", () => {
+        const before = vol.toJSON();
+        const write = vi.spyOn(memfs, "writeFileSync");
+        const handler = new ProtocolHandler(TEST_PROTOCOL, true);
+        const handled = handler.initialise({
+            userDataPath: "/path/to/candidate",
+            devtools: false,
+            update: false,
+            hidden: false,
+            positional: ["/path/to/app", `element://vector/webapp/?element-desktop-ssoid=${TEST_SESSION_ID}`],
+        });
+        expect(handled).toBe(false);
+        expect(app.setAsDefaultProtocolClient).not.toHaveBeenCalled();
+        expect(global.mainWindow!.loadURL).not.toHaveBeenCalled();
+        expect(write).not.toHaveBeenCalled();
+        expect(vol.toJSON()).toEqual(before);
+    });
+
+    it("does not look up or forward an SSO profile", () => {
+        const handler = new ProtocolHandler(TEST_PROTOCOL, true);
+        const read = vi.spyOn(memfs, "readFileSync");
+        expect(
+            handler.getProfileFromDeeplink([
+                "Element.app",
+                `element://vector/webapp/?element-desktop-ssoid=${TEST_SESSION_ID}`,
+            ]),
+        ).toBeUndefined();
+        expect(read).not.toHaveBeenCalled();
+    });
+
+    it.each(["darwin", "linux", "win32"] as const)("does not attach deeplink forwarding on %s", (platform) => {
+        vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+        const listen = vi.spyOn(app, "on");
+        new ProtocolHandler(TEST_PROTOCOL, true);
+        const url = `element://vector/webapp/?element-desktop-ssoid=${TEST_SESSION_ID}`;
+        app.emit("open-url", new Event("test"), url);
+        app.emit("second-instance", new Event("test"), ["/path/to/app", url]);
+        expect(listen).not.toHaveBeenCalled();
+        expect(global.mainWindow!.loadURL).not.toHaveBeenCalled();
     });
 });

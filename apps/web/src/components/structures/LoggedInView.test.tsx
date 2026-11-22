@@ -11,7 +11,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import React from "react";
-import { render, fireEvent, type RenderResult } from "test-utils-rtl";
+import { act, render, fireEvent, within, type RenderResult } from "test-utils-rtl";
 import {
     ConditionKind,
     EventType,
@@ -49,6 +49,7 @@ import Modal from "../../Modal";
 import { SETTINGS } from "../../settings/Settings";
 import ToastStore from "../../stores/ToastStore";
 import { ModuleApi } from "../../modules/Api";
+import { showToast as showSetupEncryptionToast } from "../../toasts/SetupEncryptionToast";
 
 describe("<LoggedInView />", () => {
     const userId = "@alice:domain.org";
@@ -527,6 +528,38 @@ describe("<LoggedInView />", () => {
         });
     });
 
+    describe("sidebar notices", () => {
+        beforeEach(() => {
+            showSetupEncryptionToast("verify_this_session");
+        });
+
+        afterEach(() => {
+            ToastStore.sharedInstance().reset();
+        });
+
+        it("keeps the verification warning and actions in the sidebar layout", () => {
+            const { container, getByRole } = getComponent({ page_type: "room_view" });
+            const notice = getByRole("heading", { name: "Verify this device" }).closest<HTMLElement>('[role="alert"]')!;
+
+            expect(container.querySelector(".mx_LeftPanel_outerWrapper")).toContainElement(notice);
+            expect(within(notice).getByRole("heading", { name: "Verify this device" })).toBeInTheDocument();
+            expect(within(notice).getByText(/unverified devices/)).toBeInTheDocument();
+            expect(within(notice).getByRole("link", { name: "Learn more" })).toBeInTheDocument();
+            expect(within(notice).getByRole("button", { name: "Continue" })).toBeEnabled();
+            expect(within(notice).getByRole("button", { name: "Later" })).toBeEnabled();
+        });
+
+        it("removes the sidebar notice when its last toast is dismissed", () => {
+            const { queryByRole, getByRole } = getComponent({ page_type: "room_view" });
+            expect(getByRole("heading", { name: "Verify this device" })).toBeInTheDocument();
+
+            act(() => ToastStore.sharedInstance().dismissToast("setupencryption"));
+
+            expect(queryByRole("heading", { name: "Verify this device" })).not.toBeInTheDocument();
+            expect(getByRole("navigation", { name: "Room list" })).toBeInTheDocument();
+        });
+    });
+
     describe("module-rendered fullscreen view (e.g. multiroom)", () => {
         // A page_type for which a module registers a custom full-screen renderer.
         const modulePageType = "io.element.test_fullscreen";
@@ -539,6 +572,7 @@ describe("<LoggedInView />", () => {
 
         afterEach(() => {
             ModuleApi.instance.navigation.locationRenderers.delete(modulePageType);
+            ToastStore.sharedInstance().reset();
         });
 
         it("renders the resizable separator for a normal room view with the new room list", () => {
@@ -558,6 +592,20 @@ describe("<LoggedInView />", () => {
             expect(container.querySelector(".mx_ResizeHandle")).not.toBeInTheDocument();
             // ...while the space panel rail remains visible.
             expect(container.querySelector(".mx_SpacePanel")).toBeInTheDocument();
+        });
+
+        it("keeps a single verification notice available in the fullscreen module view", () => {
+            showSetupEncryptionToast("verify_this_session");
+            const { getAllByRole, getByTestId } = getComponent({ page_type: modulePageType });
+
+            expect(getByTestId("module-content")).toBeInTheDocument();
+            const notices = getAllByRole("alert").filter((notice) =>
+                within(notice).queryByRole("heading", { name: "Verify this device" }),
+            );
+            expect(notices).toHaveLength(1);
+            const [notice] = notices;
+            expect(within(notice).getByRole("heading", { name: "Verify this device" })).toBeInTheDocument();
+            expect(within(notice).getByRole("button", { name: "Continue" })).toBeEnabled();
         });
     });
 

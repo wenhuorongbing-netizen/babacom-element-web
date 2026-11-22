@@ -18,6 +18,11 @@ Please see LICENSE files in the repository root for full details.
     flex-direction: column;
     max-width: 50%;
     position: relative;
+
+    > .mx_ToastContainer ~ .mx_LeftPanel_wrapper {
+        height: auto;
+        min-height: 0;
+    }
 }
 
 .mx_LeftPanel_wrapper,
@@ -74,6 +79,11 @@ Please see LICENSE files in the repository root for full details.
         /* Create another flexbox (this time a column) for the room list components */
         display: flex;
         flex-direction: column;
+
+        > .mx_RoomListPanel {
+            flex: 1 1 auto;
+            min-height: 0;
+        }
     }
 
     /* These styles override the defaults for the minimized (66px) layout */

@@ -8,11 +8,20 @@ Please see LICENSE files in the repository root for full details.
 
 import React from "react";
 import classNames from "classnames";
+import { VoiceControlView, useCreateAutoDisposedViewModel } from "@element-hq/web-shared-components";
 
 import type ResizeNotifier from "../../utils/ResizeNotifier";
 import { type SpaceKey, UPDATE_SELECTED_SPACE } from "../../stores/spaces";
 import { RoomListPanel } from "../views/rooms/RoomListPanel";
 import { SDKContext } from "../../contexts/SDKContext.ts";
+import { useMatrixClientContext } from "../../contexts/MatrixClientContext";
+import { VoiceControlViewModel } from "../../viewmodels/room/VoiceControlViewModel";
+
+function VoiceControls(): React.JSX.Element {
+    const client = useMatrixClientContext();
+    const vm = useCreateAutoDisposedViewModel(() => new VoiceControlViewModel({ client }));
+    return <VoiceControlView vm={vm} />;
+}
 
 interface IProps {
     isMinimized: boolean;
@@ -57,6 +66,7 @@ export default class LeftPanel extends React.Component<IProps, IState> {
             <div className={containerClasses}>
                 <div className="mx_LeftPanel_roomListContainer">
                     <RoomListPanel activeSpace={this.state.activeSpace} />
+                    <VoiceControls />
                 </div>
             </div>
         );

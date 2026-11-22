@@ -1,0 +1,41 @@
+# BabaCom 对照 Discord 的麦克风与屏幕共享研究
+
+对照 Windows 桌面端。源码基准为 Element Web `f19cfd9` 及当前本地改动，内嵌 Element Call `0.26.0`。本轮验证到官方文档和源码，双账号实机验收待执行。 [依赖锁定](../apps/web/package.json#L125) · [Element Call 0.26.0](https://github.com/element-hq/element-call/releases/tag/v0.26.0)
+
+## Discord 用户实际怎么操作
+
+- **麦克风**。左下语音区的麦克风按钮在静音与解除静音之间切换，按钮旁有设备菜单。Windows 的应用内快捷键是 `Ctrl+Shift+M`。停听（Deafen）另用 `Ctrl+Shift+D`，停听会关闭播放并同时禁用麦克风。 [语音区与按钮](https://discord.com/blog/discord-patch-notes-may-1-2025) · [麦克风菜单](https://support.discord.com/hc/en-us/articles/30152512891543-How-to-Use-Voice-Filters-on-Discord) · [Windows 快捷键](https://support.discord.com/hc/en-us/articles/225977308--Windows-Discord-Hotkeys) · [按键语义](https://support.discord.com/hc/en-us/articles/217083547-How-do-I-add-different-Keybinds)
+- **开播和停止**。进入有直播权限的语音频道，从左下语音状态栏点屏幕共享，选应用窗口或整个屏幕，再点 Go Live 确认。直播中可从预览管理和结束。官方私聊说明还给出换窗口操作。 [Go Live 官方流程](https://support.discord.com/hc/en-us/articles/360040816151-Go-Live-and-Screen-Share)
+- **接收方**。频道里的直播者有 Go Live 标记。成员可以只加入语音聊天，也可以主动进入直播，观看时可单独调节直播音量。直播预览有独立可见性设置。 [Go Live 观看与预览](https://support.discord.com/hc/en-us/articles/360040816151-Go-Live-and-Screen-Share)
+- **声音与画质**。官方说明 Windows 桌面共享支持音频，普通用户可用最高 720p/30 fps，桌面端可在直播中调节。本文以 720p/30 fps 作为 BabaCom 首版建议档，不推定 Discord 的默认音频勾选、应用声音隔离规则或实际编码策略。 [Go Live 音频与画质](https://support.discord.com/hc/en-us/articles/360040816151-Go-Live-and-Screen-Share) · [Discord Windows 窗口捕获说明](https://support.discord.com/hc/en-us/articles/9410427556375--Windows-Capturing-Application-Window-for-Screen-Share-and-Go-Live)
+
+## BabaCom 已有的能力与差距
+
+| 部位 | 可复用的源码事实 | 还缺什么 |
+| --- | --- | --- |
+| 活跃通话 | `CallStore.connectedCalls` 已发布连接变化。通话页挂载 Element Call widget。 [CallStore](../apps/web/src/stores/CallStore.ts#L105) · [CallView](../apps/web/src/components/views/voip/CallView.tsx#L47) | 左侧栏底部需要订阅活跃通话。文字房间切换时，控制仍绑定原语音会话。 [LeftPanel](../apps/web/src/components/structures/LeftPanel.tsx#L52) |
+| 麦克风 | 锁定版本的 widget 通过 `io.element.device_mute` 通知状态，也接收只带 `audio_enabled` 的设置请求。BabaCom 宿主收到通知时目前只回执。 [上游 HostBridge](https://github.com/element-hq/element-call/blob/v0.26.0/src/HostBridge.ts#L179-L200) · [上游 MuteStates](https://github.com/element-hq/element-call/blob/v0.26.0/src/state/MuteStates.ts#L218-L264) · [本地 onDeviceMute](../apps/web/src/models/Call.ts#L990) | 把已连接会话的麦克风状态接到左下按钮及快捷键。现有 Windows `Ctrl+D` 通话动作在旧通话组件处理，不能据此认定新 widget 已有 Discord 绑定。 [快捷键](../apps/web/src/accessibility/KeyboardShortcuts.ts#L438) · [旧通话](../apps/web/src/components/views/voip/LegacyCallView.tsx#L289) |
+| 共享选源 | 当前选择器已有屏幕、窗口、显式确认及系统声音默认关。Electron 主进程复核来源，并在匹配的一次性请求和用户勾选同时满足时返回系统回环。 [选择器](../apps/web/src/components/views/elements/DesktopCapturerSourcePicker.tsx#L87) · [请求](../apps/desktop/src/displayMediaCallback.ts#L23) · [IPC 校验](../apps/desktop/src/ipc.ts#L175) | 接入左下语音条，连接共享开始、已发布、停止和失败。把回环标为「共享系统声音」，窗口选取本身无法限定声音来自该窗口。 [Electron 显示捕获 API](https://www.electronjs.org/docs/latest/api/session#sessetdisplaymediarequesthandlerhandler-opts) |
+| 共享发出和观看 | Element Call 通过既有 LiveKit 发布路径开关共享，已有错误状态，也会将共享画面纳入焦点布局。已查的 HostBridge 提供设备静音和通话操作，共享控制仍在 widget 的通话模型内。 [本地成员模型](https://github.com/element-hq/element-call/blob/v0.26.0/src/state/CallViewModel/localMember/LocalMember.ts#L816-L890) · [焦点布局](https://github.com/element-hq/element-call/blob/v0.26.0/src/state/CallViewModel/CallViewModel.ts#L1067-L1070) · [上游 HostBridge](https://github.com/element-hq/element-call/blob/v0.26.0/src/HostBridge.ts#L62-L118) | 验证宿主点击能否触发原选源并保持用户激活。单独验证接收侧可选择「观看直播」及停止观看，确认接收侧的画面和共享声音是否真的停止。 |
+
+## 建议按四个小任务实现
+
+1. **麦克风状态接线**。复用 `DeviceMute`。侧栏和通话视图订阅同一会话状态。点击时提交明确的开关值，等待 widget 状态更新。传输回执只说明请求被处理，双端音频验收仍需确认实际发送。开麦失败或连接中断时保留安全状态，过期事件不得更新新会话。
+2. **左下语音条**。将当前频道、连接状态、麦克风、分享、断开固定在左下。切换文字房间时保留控制。麦克风一键切换，设备菜单独立。Windows 在应用内用 `Ctrl+Shift+M` 走同一处理路径，验证长按、焦点在 iframe 和快捷键冲突。
+3. **发出共享**。沿用一次性选源和声音同意。语音条展示「共享屏幕 → 选窗口/屏幕 → 开始直播 → 正在共享 → 停止共享」。显示目标频道，取消不发布，发布成功才显示正在共享，停止共享后仍留在语音频道。先证实 widget 触发方式满足捕获的用户激活要求，再接入口。
+4. **观看和换源**。频道里显示直播状态，接收方主动观看或退出观看，聊天保持可用。首版对标验收包含观看控制。换源和直播中画质管理随后单独验证，换源失败不得误采其它窗口或退出语音。只有隔离了其它应用的声音，才把选项称为「应用声音」。
+
+## 双账号验收
+
+| 操作 | 双端可观察结果 |
+| --- | --- |
+| A 在通话中点麦克风或按 `Ctrl+Shift+M` | 两处控件同步，B 听不到 A 的麦克风。解除静音且权限正常后恢复。快捷键一次只切换一次。 |
+| A 拒绝麦克风权限或拔掉设备 | 有明确反馈，控件不显示已成功开麦。重连及切文字房间后状态与活跃会话一致。 |
+| A 选窗口但取消，或确认前关闭目标窗口 | B 没有屏幕画面或共享声音，A 仍能语音。未勾选的系统音频未发布。 |
+| A 确认分享窗口和整屏，B 主动观看 | 目标正确。A 有直播标志和停止入口，B 可在语音中选择观看。B 停止观看后仍可通话。 |
+| A 勾选系统声音后共享，再关麦克风 | B 在观看时仍听到测试系统音，听不到 A 的麦克风。关闭系统声音的场景只有画面和独立语音。 |
+| A 停止共享、结束捕获或断开语音 | 停共享时 B 的共享画面与共享音轨消失，语音仍在。离开语音时清理共享和控件状态。 |
+
+## 战略 PO 咨询
+
+原战略 PO 的链接在 Edge 返回 ChatGPT 首页，当前会话的 Edge 控制入口也未重新出现。本轮未发出咨询。待原对话可用后，集中请 PO 裁决两件事。左下语音条是否按上述四个小任务推进。接收方主动观看、换源和画质管理在首次本地版各自是否必需。以上优先级为本轮研究建议。

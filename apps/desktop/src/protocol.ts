@@ -25,14 +25,17 @@ export default class ProtocolHandler {
     private readonly store: Record<string, string> = {};
     private readonly sessionId: string;
 
-    public constructor(private readonly protocol: string) {
-        if (process.platform === "darwin") {
+    public constructor(
+        private readonly protocol: string,
+        private readonly isolatedCandidate = false,
+    ) {
+        if (!isolatedCandidate && process.platform === "darwin") {
             // Protocol handler for macos
             app.on("open-url", (ev, url) => {
                 ev.preventDefault();
                 this.handleDeeplink(url);
             });
-        } else {
+        } else if (!isolatedCandidate) {
             // Protocol handler for win32/Linux
             app.on("second-instance", (ev, commandLine) => {
                 const url = commandLine.at(-1);
@@ -42,7 +45,7 @@ export default class ProtocolHandler {
             });
         }
 
-        this.store = this.readStore();
+        if (!isolatedCandidate) this.store = this.readStore();
         this.sessionId = randomUUID();
 
         ipcMain.handle("getProtocol", this.onGetProtocol);
@@ -122,6 +125,7 @@ export default class ProtocolHandler {
      * @returns whether a deeplink was present in args and navigated to.
      */
     public initialise(args: Args): boolean {
+        if (this.isolatedCandidate) return false;
         this.setAsDefaultProtocolClient(args);
 
         const url = args.positional.find(this.checkArgIsUrl);
@@ -141,6 +145,7 @@ export default class ProtocolHandler {
     }
 
     public getProfileFromDeeplink(args: string[]): string | undefined {
+        if (this.isolatedCandidate) return undefined;
         // check if we are passed a profile in the SSO callback url
         const deeplinkUrl = args.find(
             (arg) => arg.startsWith(`${this.protocol}:/`) || arg.startsWith(`${LEGACY_PROTOCOL}://`),

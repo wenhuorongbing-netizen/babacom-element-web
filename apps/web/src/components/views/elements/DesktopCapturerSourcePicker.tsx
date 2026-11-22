@@ -8,6 +8,7 @@ Please see LICENSE files in the repository root for full details.
 
 import React from "react";
 import classNames from "classnames";
+import { logger } from "matrix-js-sdk/src/logger";
 
 import { _t, _td } from "../../../languageHandler";
 import BaseDialog from "..//dialogs/BaseDialog";
@@ -16,6 +17,7 @@ import AccessibleButton from "./AccessibleButton";
 import TabbedView, { Tab, TabLocation } from "../../structures/TabbedView";
 import PlatformPeg from "../../../PlatformPeg";
 import { type NonEmptyArray } from "../../../@types/common";
+import StyledCheckbox from "./StyledCheckbox";
 
 export function getDesktopCapturerSources(): Promise<Array<DesktopCapturerSource>> {
     const options: GetSourcesOptions = {
@@ -68,13 +70,17 @@ export interface PickerIState {
     selectedTab: Tabs;
     sources: Array<DesktopCapturerSource>;
     selectedSource?: DesktopCapturerSource;
+    shareSystemAudio: boolean;
 }
 export interface PickerIProps {
-    onFinished(source?: DesktopCapturerSource): void;
+    /** Whether the main process can offer system audio for this request. */
+    canShareSystemAudio?: boolean;
+    elementCallRoomName?: string;
+    onFinished(source?: DesktopCapturerSource, shareSystemAudio?: boolean): void;
 }
 
 export default class DesktopCapturerSourcePicker extends React.Component<PickerIProps, PickerIState> {
-    public interval?: number;
+    private stopSourceRefresh?: () => void;
 
     public constructor(props: PickerIProps) {
         super(props);
@@ -82,27 +88,43 @@ export default class DesktopCapturerSourcePicker extends React.Component<PickerI
         this.state = {
             selectedTab: Tabs.Screens,
             sources: [],
+            shareSystemAudio: false,
         };
     }
 
-    public async componentDidMount(): Promise<void> {
-        // window.setInterval() first waits and then executes, therefore
-        // we call getDesktopCapturerSources() here without any delay.
-        // Otherwise the dialog would be left empty for some time.
-        this.setState({
-            sources: await getDesktopCapturerSources(),
-        });
+    public componentDidMount(): void {
+        let stopped = false;
+        let timeout: number | undefined;
 
-        // We update the sources every 500ms to get newer thumbnails
-        this.interval = window.setInterval(async (): Promise<void> => {
-            this.setState({
-                sources: await getDesktopCapturerSources(),
-            });
-        }, 500);
+        const refreshSources = async (): Promise<void> => {
+            let sources: DesktopCapturerSource[] | undefined;
+            try {
+                sources = await getDesktopCapturerSources();
+            } catch (error) {
+                if (!stopped) logger.warn("Failed to refresh desktop capture sources", error);
+            }
+
+            if (stopped) return;
+
+            // Wait for enumeration to settle before scheduling the next thumbnail refresh.
+            timeout = window.setTimeout(() => void refreshSources(), 500);
+            if (sources) {
+                this.setState(({ selectedSource }) => ({
+                    sources,
+                    selectedSource: sources.find((source) => source.id === selectedSource?.id),
+                }));
+            }
+        };
+
+        this.stopSourceRefresh = () => {
+            stopped = true;
+            window.clearTimeout(timeout);
+        };
+        void refreshSources();
     }
 
     public componentWillUnmount(): void {
-        clearInterval(this.interval);
+        this.stopSourceRefresh?.();
     }
 
     private onSelect = (source: DesktopCapturerSource): void => {
@@ -110,7 +132,10 @@ export default class DesktopCapturerSourcePicker extends React.Component<PickerI
     };
 
     private onShare = (): void => {
-        this.props.onFinished(this.state.selectedSource);
+        this.props.onFinished(
+            this.state.selectedSource,
+            this.props.canShareSystemAudio === true && this.state.shareSystemAudio,
+        );
     };
 
     private onTabChange = (tab: Tabs): void => {
@@ -143,6 +168,7 @@ export default class DesktopCapturerSourcePicker extends React.Component<PickerI
             this.getTab(Tabs.Screens, _td("voip|screenshare_monitor")),
             this.getTab(Tabs.Windows, _td("voip|screenshare_window")),
         ];
+        const { elementCallRoomName } = this.props;
 
         return (
             <BaseDialog
@@ -150,14 +176,28 @@ export default class DesktopCapturerSourcePicker extends React.Component<PickerI
                 onFinished={this.onCloseClick}
                 title={_t("voip|screenshare_title")}
             >
+                {elementCallRoomName !== undefined && (
+                    <p>{_t("voip|screenshare_destination", { roomName: elementCallRoomName })}</p>
+                )}
                 <TabbedView
                     tabs={tabs}
                     tabLocation={TabLocation.TOP}
                     activeTabId={this.state.selectedTab}
                     onChange={this.onTabChange}
                 />
+                {elementCallRoomName !== undefined && this.state.selectedSource && (
+                    <p role="status">{_t("voip|screenshare_selected_source", { sourceName: this.state.selectedSource.name })}</p>
+                )}
+                {this.props.canShareSystemAudio === true && (
+                    <StyledCheckbox
+                        checked={this.state.shareSystemAudio}
+                        onChange={(event) => this.setState({ shareSystemAudio: event.target.checked })}
+                    >
+                        {_t("voip|screenshare_system_audio")}
+                    </StyledCheckbox>
+                )}
                 <DialogButtons
-                    primaryButton={_t("action|share")}
+                    primaryButton={elementCallRoomName !== undefined ? _t("voip|screenshare_confirm") : _t("action|share")}
                     hasCancel={true}
                     onCancel={this.onCloseClick}
                     onPrimaryButtonClick={this.onShare}

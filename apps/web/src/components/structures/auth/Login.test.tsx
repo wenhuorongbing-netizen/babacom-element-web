@@ -27,6 +27,7 @@ import Login from "./Login";
 import type BasePlatform from "../../../BasePlatform";
 import * as registerClientUtils from "../../../utils/oauth/registerClient";
 import { ModuleApi } from "../../../modules/Api.ts";
+import SSOButtons from "../../views/elements/SSOButtons";
 
 vi.useRealTimers();
 
@@ -105,6 +106,10 @@ describe("Login", function () {
         expect(container.querySelector("form")).toBeTruthy();
 
         expect(container.querySelector(".mx_ServerPicker_change")).toBeTruthy();
+        expect(screen.getByRole("heading", { name: "Account server", level: 2 })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Change account server" })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Change account server" })).toHaveTextContent("Change");
+        expect(screen.getByText("https://matrix.org", { exact: true })).toBeInTheDocument();
     });
 
     it("should show register button", async () => {
@@ -270,7 +275,7 @@ describe("Login", function () {
         expect(container.querySelector(".mx_SSOButton")).not.toBeInTheDocument();
     });
 
-    it("should show single Continue button if OIDC MSC3824 compatibility is given by server", async () => {
+    it("should show single Continue signing in button if OIDC MSC3824 compatibility is given by server", async () => {
         mockClient.loginFlows.mockResolvedValue({
             flows: [
                 {
@@ -289,11 +294,37 @@ describe("Login", function () {
         const ssoButtons = container.querySelectorAll(".mx_SSOButton");
 
         expect(ssoButtons.length).toBe(1);
-        expect(ssoButtons[0].textContent).toBe("Continue");
+        expect(ssoButtons[0].textContent).toBe("Continue signing in");
+        expect(ssoButtons[0]).toHaveAccessibleName("Continue signing in");
 
         // no password form visible
         expect(container.querySelector("form")).toBeFalsy();
     });
+
+    it.each([Matrix.SSOAction.REGISTER, undefined])(
+        "should retain Continue and the SSO action when action is %s",
+        (action) => {
+            render(
+                <SSOButtons
+                    matrixClient={mockClient}
+                    flow={{ type: "m.login.sso", [OAUTH_AWARE_PREFERRED_FLOW_FIELD.name]: true }}
+                    loginType="sso"
+                    action={action}
+                />,
+            );
+
+            const button = screen.getByRole("button", { name: "Continue" });
+            expect(button).toHaveTextContent("Continue");
+            fireEvent.click(button);
+            expect(platform.startSingleSignOn).toHaveBeenCalledExactlyOnceWith(
+                mockClient,
+                "sso",
+                undefined,
+                undefined,
+                action,
+            );
+        },
+    );
 
     it("should show branded SSO buttons", async () => {
         const idpsWithIcons = Object.values(IdentityProviderBrand).map((brand) => ({
@@ -449,7 +480,7 @@ describe("Login", function () {
 
             // did not continue with matrix login
             expect(mockClient.loginFlows).not.toHaveBeenCalled();
-            expect(screen.getByText("Continue")).toBeInTheDocument();
+            expect(screen.getByRole("button", { name: "Continue signing in" })).toBeInTheDocument();
         });
     });
 

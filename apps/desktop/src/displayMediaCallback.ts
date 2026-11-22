@@ -6,26 +6,62 @@ Please see LICENSE files in the repository root for full details.
 */
 
 import type { Streams } from "electron";
+import { randomUUID } from "node:crypto";
+import type { DesktopCaptureRequest } from "shared-types";
 
 type DisplayMediaCallback = (streams: Streams) => void;
 
-let displayMediaCallback: DisplayMediaCallback | null = null;
+interface PendingDisplayMediaRequest extends DesktopCaptureRequest {
+    callback: DisplayMediaCallback;
+}
 
-export const setDisplayMediaCallback = (callback: DisplayMediaCallback | null): void => {
-    displayMediaCallback = callback;
+let pendingRequest: PendingDisplayMediaRequest | null = null;
+
+/** Extract the call destination from a packaged widget frame, without forwarding the URL. */
+export function getEmbeddedCallRoomId(frameUrl?: string): string | undefined {
+    const url = frameUrl && URL.parse(frameUrl);
+    if (
+        !url ||
+        url.protocol !== "vector:" ||
+        url.host !== "vector" ||
+        url.pathname !== "/webapp/widgets/element-call/" ||
+        !url.hash.startsWith("#?")
+    ) {
+        return undefined;
+    }
+
+    const roomIds = new URLSearchParams(url.hash.slice(2)).getAll("roomId");
+    return roomIds.length === 1 && roomIds[0].startsWith("!") ? roomIds[0] : undefined;
+}
+
+/** Register a renderer picker request, rejecting any previous unresolved request. */
+export const setDisplayMediaCallback = (
+    callback: DisplayMediaCallback | null,
+    audioRequested = false,
+    elementCallRoomId?: string,
+): DesktopCaptureRequest | null => {
+    const previousRequest = pendingRequest;
+    pendingRequest = null;
+    // Keep the dummy video source so Electron settles a canceled getDisplayMedia promise.
+    previousRequest?.callback({ video: { id: "", name: "" } });
+    if (!callback) return null;
+
+    const request = {
+        requestId: randomUUID(),
+        canShareSystemAudio: process.platform === "win32" && audioRequested === true && !!elementCallRoomId,
+        ...(elementCallRoomId ? { elementCallRoomId } : {}),
+    };
+    pendingRequest = { ...request, callback };
+    return request;
 };
 
 /**
- * Atomically read and clear the pending display-media callback.
- *
- * The screen-share request handler stores a single callback per request (see
- * electron-main.ts). Reading-and-clearing in one step guarantees consume-once
- * semantics: a duplicate or stale `callDisplayMediaCallback` IPC — e.g. left over
- * from the macOS 15+ native picker path, which never consumes it via the renderer —
- * resolves to `null` and becomes a safe no-op instead of invoking a stale callback twice.
+ * Atomically consume the matching request once. A stale picker reply must not
+ * consume a newer request or reuse its audio eligibility.
  */
-export const consumeDisplayMediaCallback = (): DisplayMediaCallback | null => {
-    const callback = displayMediaCallback;
-    displayMediaCallback = null;
-    return callback;
+export const consumeDisplayMediaCallback = (requestId: string): PendingDisplayMediaRequest | null => {
+    if (pendingRequest?.requestId !== requestId) return null;
+    const request = pendingRequest;
+    pendingRequest = null;
+    return request;
 };

@@ -97,6 +97,9 @@ export default defineConfig({
         react(),
         layerCssAssets(),
         dts({
+            compilerOptions: {
+                types: ["vite/client", "storybook-addon-vis/matcher", "node"],
+            },
             bundleTypes: {
                 invokeOptions: {
                     localBuild: !!process.env.CI,

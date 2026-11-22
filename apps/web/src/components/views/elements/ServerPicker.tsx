@@ -21,6 +21,8 @@ import InfoDialog from "../dialogs/InfoDialog";
 interface IProps {
     title?: string;
     dialogTitle?: string;
+    changeLabel?: string;
+    changeAriaLabel?: string;
     serverConfig: ValidatedServerConfig;
     disabled?: boolean;
     onServerConfigChange?(this: void, config: ValidatedServerConfig): void;
@@ -50,7 +52,15 @@ const onHelpClick = (): void => {
     );
 };
 
-const ServerPicker: React.FC<IProps> = ({ title, dialogTitle, serverConfig, onServerConfigChange, disabled }) => {
+const ServerPicker: React.FC<IProps> = ({
+    title,
+    dialogTitle,
+    changeLabel,
+    changeAriaLabel,
+    serverConfig,
+    onServerConfigChange,
+    disabled,
+}) => {
     const disableCustomUrls = SdkConfig.get("disable_custom_urls");
 
     let editBtn;
@@ -63,8 +73,14 @@ const ServerPicker: React.FC<IProps> = ({ title, dialogTitle, serverConfig, onSe
             });
         };
         editBtn = (
-            <AccessibleButton className="mx_ServerPicker_change" kind="link" onClick={onClick} disabled={disabled}>
-                {_t("action|edit")}
+            <AccessibleButton
+                className="mx_ServerPicker_change"
+                kind="link"
+                onClick={onClick}
+                disabled={disabled}
+                aria-label={changeAriaLabel}
+            >
+                {changeLabel || _t("action|edit")}
             </AccessibleButton>
         );
     }

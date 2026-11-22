@@ -160,10 +160,54 @@ ipcMain.on("ipcCall", async function (_ev: IpcMainEvent, payload) {
                 ret = [];
             }
             break;
-        case "callDisplayMediaCallback":
-            consumeDisplayMediaCallback()?.({ video: args[0] });
+        case "callDisplayMediaCallback": {
             ret = null;
+            const selection: unknown = args[0];
+            if (
+                !selection ||
+                typeof selection !== "object" ||
+                !("requestId" in selection) ||
+                typeof selection.requestId !== "string"
+            ) {
+                break;
+            }
+
+            const selectedSource = "source" in selection ? selection.source : undefined;
+            let source: Electron.DesktopCapturerSource | undefined;
+            if (
+                selectedSource &&
+                typeof selectedSource === "object" &&
+                "id" in selectedSource &&
+                typeof selectedSource.id === "string" &&
+                selectedSource.id
+            ) {
+                try {
+                    const sources = await desktopCapturer.getSources({
+                        types: ["screen", "window"],
+                        thumbnailSize: { width: 0, height: 0 },
+                    });
+                    source = sources.find((candidate) => candidate.id === selectedSource.id);
+                } catch (error) {
+                    console.error("Failed to validate desktop capturer source", error);
+                }
+            }
+
+            // Recheck the ID after awaiting native sources: a newer request may have replaced this one.
+            const request = consumeDisplayMediaCallback(selection.requestId);
+            if (request) {
+                const streams: Electron.Streams = { video: source ?? { id: "", name: "" } };
+                if (
+                    source &&
+                    request.canShareSystemAudio &&
+                    "shareSystemAudio" in selection &&
+                    selection.shareSystemAudio === true
+                ) {
+                    streams.audio = "loopback";
+                }
+                request.callback(streams);
+            }
             break;
+        }
 
         case "clearStorage":
             await clearData(global.mainWindow.webContents.session);

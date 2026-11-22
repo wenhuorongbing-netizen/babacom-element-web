@@ -81,3 +81,32 @@ Please see LICENSE files in the repository root for full details.
         }
     }
 }
+
+.mx_LeftPanel_outerWrapper > .mx_ToastContainer {
+    position: relative;
+    top: auto;
+    left: auto;
+    z-index: auto;
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: 50%;
+    margin: var(--cpd-space-3x);
+    overflow: auto;
+
+    .mx_Toast_toast {
+        min-width: 0;
+        grid-template-columns: var(--cpd-space-5x) minmax(0, 1fr) auto;
+        padding: calc(var(--cpd-space-3x) - var(--cpd-border-width-1));
+    }
+
+    .mx_Toast_title,
+    .mx_Toast_body {
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    .mx_Toast_body button {
+        min-width: 0;
+        white-space: normal;
+    }
+}

@@ -175,7 +175,10 @@ export default (env: string, argv: Record<string, any>): webpack.Configuration =
                               "widgets/element-call/",
                           ],
                       }),
-                      new CssMinimizerPlugin(),
+                      new CssMinimizerPlugin({
+                          // Element Call assets already include content hashes and are minified.
+                          exclude: "widgets/element-call/",
+                      }),
                   ]
                 : [],
 
@@ -664,8 +667,10 @@ export default (env: string, argv: Record<string, any>): webpack.Configuration =
                     // Element Call embedded widget
                     {
                         from: "**",
-                        context: path.join(getPackageRoot("@element-hq/element-call-embedded"), "dist"),
-                        to: path.join(__dirname, "webapp", "widgets", "element-call"),
+                        context: process.env.BABACOM_CALL_WIDGET_DIR
+                            ? path.resolve(process.env.BABACOM_CALL_WIDGET_DIR)
+                            : path.join(getPackageRoot("@element-hq/element-call-embedded"), "dist"),
+                        to: "widgets/element-call",
                     },
                     // Mobile guide assets
                     {

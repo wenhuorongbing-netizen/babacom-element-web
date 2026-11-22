@@ -243,6 +243,7 @@ export default class ForgotPassword extends React.Component<Props, State> {
             if (err.httpStatus !== 401) {
                 // 401 = waiting for email verification, else unknown error
                 this.handleError(err);
+                this.setState({ phase: Phase.PasswordInput });
                 return;
             }
         }
