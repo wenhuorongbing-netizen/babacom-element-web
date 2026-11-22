@@ -20,7 +20,6 @@ import { type PointerEvent } from "react";
 import SettingsStore from "../../settings/SettingsStore";
 import { SettingLevel } from "../../settings/SettingLevel";
 import { AutoCollapse } from "./auto-collapse/AutoCollapse";
-import { type CallStore } from "../../stores/CallStore";
 
 function getInitialState(): ResizerViewSnapshot {
     const shouldStartCollapsed =
@@ -64,20 +63,16 @@ export class ResizerViewModel
      */
     private firstResizedEventSeen = false;
 
-    public constructor(callStore: CallStore) {
+    public constructor() {
         super(undefined, getInitialState());
 
         // Run onSeparatorClick when the separator is clicked.
         this.mouseClickHandler = new MouseClickHandler(this.onSeparatorClick);
         this.autoCollapse = this.disposables.track(
-            new AutoCollapse(
-                this.onSeparatorClick,
-                () => {
-                    this.panelHandle?.collapse();
-                    this.snapshot.merge({ isCollapsed: true });
-                },
-                callStore,
-            ),
+            new AutoCollapse(this.onSeparatorClick, () => {
+                this.panelHandle?.collapse();
+                this.snapshot.merge({ isCollapsed: true });
+            }),
         );
     }
 

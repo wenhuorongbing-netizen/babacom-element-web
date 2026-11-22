@@ -10,15 +10,10 @@ Please see LICENSE files in the repository root for full details.
 import { describe, expect, it } from "vitest";
 
 import { Behaviours } from "./behaviours";
-import { CollapseOnCallResizeBehaviour } from "./CollapseOnCallResizeBehaviour";
 import { CollapseOnWindowResizeBehaviour } from "./CollapseOnWindowResizeBehaviour";
 
 describe("Behaviours", () => {
-    it("keeps the left panel open when a call starts, so the voice controls stay usable", () => {
-        expect(Behaviours).not.toContain(CollapseOnCallResizeBehaviour);
-    });
-
-    it("still collapses the left panel on narrow windows", () => {
-        expect(Behaviours).toContain(CollapseOnWindowResizeBehaviour);
+    it("only auto-collapses the left panel for narrow windows, never when a call starts", () => {
+        expect(Behaviours).toEqual([CollapseOnWindowResizeBehaviour]);
     });
 });

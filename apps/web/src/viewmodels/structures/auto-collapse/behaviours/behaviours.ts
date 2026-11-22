@@ -10,7 +10,7 @@ import { CollapseOnWindowResizeBehaviour } from "./CollapseOnWindowResizeBehavio
 /**
  * The auto-collapse behaviours used by the app.
  *
- * BabaCom: CollapseOnCallResizeBehaviour is deliberately left out. Collapsing the left panel when a call starts
- * makes it inert, which disables the persistent voice controls that live there for the whole call.
+ * BabaCom: upstream also collapses the left panel when a call starts. That is removed here because a collapsed
+ * panel is inert, which disabled the persistent voice controls in the left panel for the whole call.
  */
 export const Behaviours = [CollapseOnWindowResizeBehaviour];
