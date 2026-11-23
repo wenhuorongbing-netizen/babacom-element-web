@@ -39,6 +39,13 @@ export interface StartedMatrixRTCBackend {
  * configuration that wires a homeserver up to it: a TLS federation listener the jwt service can validate
  * OpenID tokens against, the MSCs Element Call relies on, and the transport announcement.
  */
+/**
+ * BabaCom: an image of BabaCom's lk-jwt-service fork to run with its screen-share arbiter, built from a pinned commit.
+ * Unset, the upstream service runs as before. The tokens match `res/matrix-rtc/lk-jwt-appservice.yaml`.
+ */
+const BABACOM_ARBITER_IMAGE = process.env.BABACOM_LK_JWT_IMAGE;
+const BABACOM_ARBITER_TOKENS = { asToken: "babacom_e2e_as_token", hsToken: "babacom_e2e_hs_token" };
+
 export async function startMatrixRTCBackend(network: StartedNetwork, logger: Logger): Promise<StartedMatrixRTCBackend> {
     const livekit = await new LiveKitContainer("lk-jwt-service")
         .withNetwork(network)
@@ -49,6 +56,7 @@ export async function startMatrixRTCBackend(network: StartedNetwork, logger: Log
         livekitUrl: livekit.signallingUrl,
         homeserverServerName: MATRIX_RTC_SERVER_NAME,
         homeserverInternalUrl: `http://${MATRIX_RTC_SERVER_NAME}:8008`,
+        babacomArbiter: BABACOM_ARBITER_IMAGE ? { image: BABACOM_ARBITER_IMAGE, ...BABACOM_ARBITER_TOKENS } : undefined,
     })
         .withNetwork(network)
         .withLogConsumer(logger.getConsumer("lk-jwt-service"))
@@ -86,7 +94,10 @@ export async function startMatrixRTCBackend(network: StartedNetwork, logger: Log
             msc4222_enabled: true,
             // MSC4354: sticky events for MatrixRTC memberships
             msc4354_enabled: true,
+            // BabaCom: MSC4502 `/is_joined` membership look-ups for the share arbiter
+            ...(BABACOM_ARBITER_IMAGE && { msc4502_enabled: true }),
         },
+        ...(BABACOM_ARBITER_IMAGE && { app_service_config_files: ["/data/lk-jwt-appservice.yaml"] }),
         // MSC4140 delayed events, used for the delayed leave event
         max_event_delay_duration: "24h",
         rc_delayed_event_mgmt: { per_second: 10000, burst_count: 10000 },
@@ -104,6 +115,14 @@ export async function startMatrixRTCBackend(network: StartedNetwork, logger: Log
             source: path.join(__dirname, "res", "matrix-rtc", "tls.key"),
             target: "/data/tls.key",
         },
+        ...(BABACOM_ARBITER_IMAGE
+            ? [
+                  {
+                      source: path.join(__dirname, "res", "matrix-rtc", "lk-jwt-appservice.yaml"),
+                      target: "/data/lk-jwt-appservice.yaml",
+                  },
+              ]
+            : []),
     ];
 
     return {

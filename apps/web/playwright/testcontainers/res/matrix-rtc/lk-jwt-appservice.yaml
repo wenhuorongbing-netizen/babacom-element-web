@@ -1,0 +1,13 @@
+# BabaCom: registers lk-jwt-service with Synapse so its screen-share arbiter can
+# check room membership through /is_joined (MSC4502). Only used when
+# BABACOM_LK_JWT_IMAGE is set; the tokens match matrix-rtc.ts.
+id: "lk-jwt-service"
+as_token: "babacom_e2e_as_token"
+hs_token: "babacom_e2e_hs_token"
+sender_localpart: "_lk_jwt_service"
+url: "http://lk-jwt-service:8080"
+namespaces:
+    users:
+        - exclusive: false
+          regex: ".*"
+io.element.msc4502.scopes: ["urn:matrix:client:io.element.msc4502:rooms:is_joined"]
