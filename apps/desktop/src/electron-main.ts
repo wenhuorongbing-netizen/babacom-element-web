@@ -9,6 +9,8 @@ Please see LICENSE files in the repository root for full details.
 */
 
 // Squirrel on windows starts the app with various flags as hooks to tell us when we've been installed/uninstalled etc.
+// Must stay the first import: it applies the isolated candidate profile before other modules read profile paths.
+import { isolatedCandidateProfile } from "./isolated-profile.js";
 import "./squirrelhooks.js";
 import {
     app,
@@ -25,7 +27,6 @@ import {
 } from "electron";
 import * as Sentry from "@sentry/electron/main";
 import path from "node:path";
-import fs from "node:fs";
 import windowStateKeeper from "electron-window-state";
 import { URL, fileURLToPath } from "node:url";
 
@@ -49,20 +50,14 @@ import { type RendererRecovery, setupRendererRecovery } from "./renderer-recover
 import { getBuildConfig } from "./build-config.js";
 import { getAsarPath } from "./asar.js";
 import { getIconPath } from "./icon.js";
-import { getArgs, getIsolatedCandidateProfile } from "./args.js";
+import { getArgs } from "./args.js";
 import { type ConfigOptions, loadConfig } from "./config.js";
 import { createGlobalShortcuts } from "./global-shortcuts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const buildConfig = getBuildConfig();
-const isolatedProfile = getIsolatedCandidateProfile();
-if (isolatedProfile) {
-    fs.mkdirSync(isolatedProfile, { recursive: true });
-    app.setPath("userData", isolatedProfile);
-    app.setPath("sessionData", isolatedProfile);
-}
-const protocolHandler = new ProtocolHandler(buildConfig.protocol, isolatedProfile !== undefined);
+const protocolHandler = new ProtocolHandler(buildConfig.protocol, isolatedCandidateProfile !== undefined);
 const args = getArgs(protocolHandler);
 
 app.setPath("userData", args.userDataPath);

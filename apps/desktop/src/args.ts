@@ -12,6 +12,7 @@ import path from "node:path";
 
 import { Mode } from "./store.js";
 import type ProtocolHandler from "./protocol.js";
+import { getIsolatedCandidateProfileFromArgs } from "./isolated-profile.js";
 
 const defaultUserDataDir = app.getPath("userData");
 
@@ -118,42 +119,6 @@ function getUserDataPath(argv: ParsedArgs, protocolHandler: ProtocolHandler): st
         return oldUserDataPath;
     }
     return newUserDataPath;
-}
-
-function getIsolatedCandidateProfileFromArgs(argv: ParsedArgs): string | undefined {
-    const isolated = argv["babacom-isolated-candidate"];
-    if (isolated === undefined || isolated === false || isolated === "false") return undefined;
-    if (isolated !== true && isolated !== "true") {
-        throw new Error("--babacom-isolated-candidate must be a boolean flag");
-    }
-
-    const profile = argv["profile-dir"];
-    if (typeof profile !== "string" || !profile.trim() || profile !== profile.trim() || !path.isAbsolute(profile)) {
-        throw new Error("--babacom-isolated-candidate requires an explicit absolute --profile-dir");
-    }
-
-    const profilePath = path.resolve(profile);
-    // Windows strips trailing dots/spaces from ordinary path components.
-    if (process.platform === "win32" && profilePath.split(/[\\/]/).some((part) => /[. ]$/.test(part))) {
-        throw new Error("--profile-dir must not contain Windows path aliases");
-    }
-    const normalise = (value: string): string => {
-        const resolved = path.resolve(value);
-        return process.platform === "win32" ? path.toNamespacedPath(resolved).toLowerCase() : resolved;
-    };
-    const legacyPath = path.join(app.getPath("appData"), app.getName().replace("Element", "Riot"));
-    if ([defaultUserDataDir, legacyPath].some((value) => normalise(value) === normalise(profilePath))) {
-        throw new Error("--profile-dir must differ from the default and legacy profiles in isolated candidate mode");
-    }
-    return profilePath;
-}
-
-/**
- * Validates the opt-in candidate profile before any protocol handler or profile storage is initialised.
- * Returns undefined for ordinary startup; it does not read or create profile files.
- */
-export function getIsolatedCandidateProfile(): string | undefined {
-    return getIsolatedCandidateProfileFromArgs(minimist(process.argv, { alias: { help: "h" } }));
 }
 
 /**
