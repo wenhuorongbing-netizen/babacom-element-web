@@ -6,7 +6,8 @@ Please see LICENSE files in the repository root for full details.
 */
 
 // Builds BabaCom's patched Element Call widget into a directory named after its inputs (see babacom-call-widget.ts),
-// so repeated runs and CI caches reuse it. `--print-dir` only prints where the widget belongs.
+// so repeated runs and CI caches reuse it. `--print-dir` and `--print-key` only print where the widget belongs and
+// the key a matching build records in its provenance file.
 
 import { execFileSync, execSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -26,6 +27,10 @@ import {
 const dist = callWidgetDir();
 if (process.argv.includes("--print-dir")) {
     console.log(dist);
+    process.exit(0);
+}
+if (process.argv.includes("--print-key")) {
+    console.log(callWidgetKey());
     process.exit(0);
 }
 if (callWidgetProblem(dist) === null) {

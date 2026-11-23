@@ -10,7 +10,8 @@ import { expect, describe, it, beforeEach, afterEach, vi } from "vitest";
 import { fs as memfs, vol } from "memfs";
 import { app } from "electron";
 
-import { type Args, getArgs, getArgsForProtocolRegistration, getIsolatedCandidateProfile } from "./args.js";
+import { type Args, getArgs, getArgsForProtocolRegistration } from "./args.js";
+import { getIsolatedCandidateProfile } from "./isolated-profile.js";
 import type ProtocolHandler from "./protocol.js";
 
 vi.mock("node:fs", () => ({ default: memfs }));

@@ -33,17 +33,30 @@ pnpm -C apps/web run build
 Copy-Item -Recurse apps/web/webapp apps/desktop/webapp  # or extract a downloaded babacom-webapp artifact there
 pnpm -C apps/desktop run asar-webapp
 $env:VARIANT_PATH = "babacom/build.json"
-pnpm -C apps/desktop run build --publish never --x64 -w squirrel
+pnpm -C apps/desktop exec nx build element-desktop --skip-nx-cache -- --publish never --x64 -w squirrel `
+    -c.directories.output=dist/babacom-<build>
 ```
 
-If electron-builder cannot download Electron, add `-c.electronDist=<node_modules/electron/dist>` to use the same pinned
-version from the dependency install. Do not disable TLS verification.
+`--skip-nx-cache` matters locally: the desktop `build` target caches all of `apps/desktop/dist`, so each cached build
+would copy every older package in it into the Nx cache. If electron-builder cannot download Electron, add
+`-c.electronDist=<node_modules/electron/dist>` to use the same pinned version from the dependency install. Do not disable
+TLS verification.
+
+CI also starts and quits each candidate in an isolated profile. Playwright needs the Node inspector, which the shipped
+build disables through an Electron fuse, so run the test on a copy:
+
+```powershell
+Copy-Item -Recurse apps/desktop/dist/babacom-<build>/win-unpacked <copy>
+pnpm -C apps/desktop exec electron-fuses write --app "<copy>/BabaCom Internal Test.exe" EnableNodeCliInspectArguments=on
+$env:ELEMENT_DESKTOP_EXECUTABLE = "<copy>/BabaCom Internal Test.exe"
+pnpm -C apps/desktop exec playwright test playwright/e2e/launch/babacom-candidate.spec.ts
+```
 
 Once the dedicated test service is restored, start each test account in a separate profile:
 
 ```powershell
 Set-Location D:/Code/babacom/element-local/apps/desktop
-& './dist/win-unpacked/BabaCom Internal Test.exe' `
+& './dist/babacom-<build>/win-unpacked/BabaCom Internal Test.exe' `
     --profile-dir 'D:/Code/babacom/.matrix-runtime/g1/windows/client-a' --no-update
 ```
 

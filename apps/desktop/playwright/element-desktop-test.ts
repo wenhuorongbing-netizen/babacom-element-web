@@ -60,7 +60,8 @@ export const test = base.extend<Fixtures>({
     tmpDir: async ({}, use) => {
         const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "element-desktop-tests-"));
         await use(tmpDir);
-        await fs.rm(tmpDir, { recursive: true });
+        // Windows may still hold profile files briefly after the app exits
+        await fs.rm(tmpDir, { recursive: true, maxRetries: 10, retryDelay: 500 });
     },
     app: async ({ tmpDir, extraEnv, extraArgs, stdout, stderr }, use) => {
         const args = ["--profile-dir", tmpDir, ...extraArgs];
