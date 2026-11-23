@@ -129,6 +129,16 @@ jobs:
                   VARIANT_PATH: babacom/build.json
               run: pnpm run build --publish never --x64 -w squirrel
 
+            # Start and quit the candidate in an isolated profile. Playwright needs the Node inspector, which the shipped
+            # build disables through an Electron fuse, so the test runs on a copy with that fuse enabled.
+            - name: Smoke test the candidate in an isolated profile
+              working-directory: apps/desktop
+              run: |
+                  cp -r dist/win-unpacked "$RUNNER_TEMP/smoke-app"
+                  pnpm exec electron-fuses write --app "$RUNNER_TEMP/smoke-app/BabaCom Internal Test.exe" EnableNodeCliInspectArguments=on
+                  ELEMENT_DESKTOP_EXECUTABLE="$RUNNER_TEMP/smoke-app/BabaCom Internal Test.exe" \
+                      pnpm exec playwright test playwright/e2e/launch/babacom-candidate.spec.ts
+
             - name: Label build and write checksums
               working-directory: apps/desktop/dist
               env:
