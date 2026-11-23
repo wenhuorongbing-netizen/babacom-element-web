@@ -1,0 +1,7 @@
+{
+    "appId": "chat.babacom.internal-test",
+    "name": "babacom-internal-test",
+    "productName": "BabaCom Internal Test",
+    "description": "BabaCom unsigned internal test build, based on Element",
+    "protocols": ["io.babacom.internal-test"]
+}
