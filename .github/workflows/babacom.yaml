@@ -57,10 +57,11 @@ jobs:
               with:
                   write-cache: true
 
+            # test:playwright also builds the shared Playwright helpers (packages/playwright-common) first
             - name: Run BabaCom end-to-end tests
               working-directory: apps/web
               run: >
-                  pnpm playwright test --project=Chrome
+                  pnpm test:playwright --project=Chrome
                   playwright/e2e/voip/babacom-voice-controls.spec.ts
                   playwright/e2e/login/babacom-translations.spec.ts
 
