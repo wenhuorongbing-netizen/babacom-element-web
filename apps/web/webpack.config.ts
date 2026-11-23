@@ -27,6 +27,7 @@ import postcssNested from "postcss-nested";
 
 import pkgJson from "./package.json" with { type: "json" };
 import { I18nWebpackPlugin } from "./I18nWebpackPlugin.ts";
+import { callWidgetDir, callWidgetProblem } from "./scripts/babacom-call-widget.ts";
 import type { sentryWebpackPlugin as sentryWebpackPluginType } from "@sentry/webpack-plugin/webpack5";
 
 // Environment variables
@@ -63,6 +64,36 @@ const cssThemes = {
 };
 
 // Get the root of a node_modules dependency the name of its import
+/**
+ * BabaCom ships its patched Element Call widget. Only an explicit upstream-only build (BABACOM_UPSTREAM_CALL_WIDGET=1)
+ * may use the stock widget from @element-hq/element-call-embedded.
+ */
+const useUpstreamCallWidget = process.env.BABACOM_UPSTREAM_CALL_WIDGET === "1";
+
+/** Fails the build, rather than falling back to the stock widget, when the patched widget is missing or stale. */
+class BabaComCallWidgetCheckPlugin {
+    private readonly widgetDir: string;
+
+    public constructor(widgetDir: string) {
+        this.widgetDir = widgetDir;
+    }
+
+    public apply(compiler: webpack.Compiler): void {
+        const check = (): void => {
+            const problem = callWidgetProblem(this.widgetDir);
+            if (problem) {
+                throw new Error(
+                    `Patched Element Call widget unavailable: ${problem}. ` +
+                        `Run "node apps/web/scripts/build-babacom-call-widget.mjs" first, ` +
+                        `or set BABACOM_UPSTREAM_CALL_WIDGET=1 for an upstream-only build.`,
+                );
+            }
+        };
+        compiler.hooks.beforeRun.tap("BabaComCallWidgetCheckPlugin", check);
+        compiler.hooks.watchRun.tap("BabaComCallWidgetCheckPlugin", check);
+    }
+}
+
 function getPackageRoot(dep: string, target = "package.json"): string {
     const targetPath = import.meta.resolve(`${dep}${target ? "/" + target : ""}`);
     return path.dirname(fileURLToPath(targetPath));
@@ -567,6 +598,8 @@ export default (env: string, argv: Record<string, any>): webpack.Configuration =
         },
 
         plugins: [
+            !useUpstreamCallWidget && new BabaComCallWidgetCheckPlugin(callWidgetDir()),
+
             new I18nWebpackPlugin({
                 stringsPath: "src/i18n/strings/",
                 additionalStringsPaths: ["../../packages/shared-components/src/i18n/strings/"],
@@ -669,9 +702,9 @@ export default (env: string, argv: Record<string, any>): webpack.Configuration =
                     // Element Call embedded widget
                     {
                         from: "**",
-                        context: process.env.BABACOM_CALL_WIDGET_DIR
-                            ? path.resolve(process.env.BABACOM_CALL_WIDGET_DIR)
-                            : path.join(getPackageRoot("@element-hq/element-call-embedded"), "dist"),
+                        context: useUpstreamCallWidget
+                            ? path.join(getPackageRoot("@element-hq/element-call-embedded"), "dist")
+                            : callWidgetDir(),
                         to: "widgets/element-call",
                     },
                     // Mobile guide assets

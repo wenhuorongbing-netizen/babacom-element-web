@@ -71,6 +71,8 @@ jobs:
               env:
                   CI_PACKAGE: true
                   VERSION: ${{ steps.layered.outputs.version }}
+                  # Upstream compile check; the BabaCom workflow builds with the patched Element Call widget
+                  BABACOM_UPSTREAM_CALL_WIDGET: 1
               run: pnpm run build
 
             - name: Upload Artifact
