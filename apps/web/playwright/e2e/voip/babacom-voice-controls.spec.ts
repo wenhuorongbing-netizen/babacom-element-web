@@ -11,8 +11,11 @@ import { closeReleaseAnnouncementIfExists, rejectToast } from "@element-hq/eleme
 import { test, expect } from "../../element-web-test";
 
 /**
- * Happy path for BabaCom's persistent voice controls in the left panel, against a real call through the
- * real Element Call widget and MatrixRTC backend (see `element-call-full-call.spec.ts`).
+ * Happy path for BabaCom's persistent voice controls in the left panel, against a real call through BabaCom's
+ * patched Element Call widget and a real MatrixRTC backend (see `element-call-full-call.spec.ts`).
+ *
+ * The patched widget joins with the microphone off, so the first assertion also fails if the build fell back to
+ * the stock widget, which joins unmuted.
  *
  * The microphone status only changes once Element Call confirms the change over the widget API, so these
  * assertions cover the round trip, not just the button.
@@ -62,8 +65,8 @@ test.describe("BabaCom voice controls", () => {
             const voiceBar = page.locator(".mx_LeftPanel").getByRole("region", { name: "Call room" });
             await expect(voiceBar.getByText("Voice connected")).toBeVisible({ timeout: 30_000 });
 
-            // Mute, then unmute, from the sidebar; each status waits for Element Call's confirmation
-            await voiceBar.getByRole("button", { name: "Mute microphone" }).click();
+            // Joined with the microphone off; turning it on is an explicit choice from the sidebar.
+            // Each status waits for Element Call's confirmation.
             await expect(voiceBar.getByText("Microphone muted")).toBeVisible({ timeout: 15_000 });
             await voiceBar.getByRole("button", { name: "Unmute microphone" }).click();
             await expect(voiceBar.getByText("Microphone on")).toBeVisible({ timeout: 15_000 });
