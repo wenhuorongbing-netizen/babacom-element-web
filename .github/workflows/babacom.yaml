@@ -1,0 +1,83 @@
+# Builds the BabaCom web app with the patched Element Call widget, runs BabaCom's end-to-end tests against that
+# build, and uploads it as the `babacom-webapp` artifact so packaging uses the same output.
+name: BabaCom
+on:
+    pull_request: {}
+    push:
+        branches: [babacom/main]
+concurrency:
+    group: ${{ github.workflow }}-${{ github.head_ref || github.sha }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+env:
+    NX_DEFAULT_OUTPUT_STYLE: stream-without-prefixes
+permissions: {} # No permissions required
+jobs:
+    build-and-e2e:
+        name: BabaCom build and e2e
+        runs-on: ubuntu-24.04
+        timeout-minutes: 45
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+              with:
+                  persist-credentials: false
+
+            - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+            - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+              with:
+                  cache: "pnpm"
+                  node-version: "lts/*"
+
+            - name: Install dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Locate patched Element Call widget
+              id: widget
+              working-directory: apps/web
+              run: echo "dir=$(node scripts/build-babacom-call-widget.mjs --print-dir)" >> "$GITHUB_OUTPUT"
+
+            - name: Cache patched Element Call widget
+              uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+              with:
+                  path: ${{ steps.widget.outputs.dir }}
+                  key: babacom-call-widget-${{ hashFiles('patches/babacom-element-call-v0.26.0.patch', 'apps/web/scripts/babacom-call-widget.ts', 'apps/web/scripts/build-babacom-call-widget.mjs') }}
+
+            # A no-op when the cache restored a widget matching the current pins and patch
+            - name: Build patched Element Call widget
+              working-directory: apps/web
+              run: node scripts/build-babacom-call-widget.mjs
+
+            # Fails if the patched widget is missing or stale (see webpack.config.ts)
+            - name: Build BabaCom web app
+              working-directory: apps/web
+              run: |
+                  cp config.babacom.json config.json
+                  pnpm run build
+
+            - uses: ./.github/actions/setup-playwright
+              with:
+                  write-cache: true
+
+            # test:playwright also builds the shared Playwright helpers (packages/playwright-common) first
+            - name: Run BabaCom end-to-end tests
+              working-directory: apps/web
+              run: >
+                  pnpm test:playwright --project=Chrome
+                  playwright/e2e/voip/babacom-voice-controls.spec.ts
+                  playwright/e2e/login/babacom-translations.spec.ts
+
+            - name: Upload BabaCom web app
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              with:
+                  name: babacom-webapp
+                  path: apps/web/webapp
+                  retention-days: 14
+                  if-no-files-found: error
+
+            - name: Upload Playwright results
+              if: failure()
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+              with:
+                  name: babacom-playwright-results
+                  path: apps/web/playwright/test-results
+                  retention-days: 14
+                  if-no-files-found: ignore

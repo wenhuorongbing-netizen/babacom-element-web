@@ -5,30 +5,49 @@ SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 Please see LICENSE files in the repository root for full details.
 */
 
-import { execFileSync, execSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+// Builds BabaCom's patched Element Call widget into a directory named after its inputs (see babacom-call-widget.ts),
+// so repeated runs and CI caches reuse it. `--print-dir` only prints where the widget belongs.
 
-const callRevision = "71593f1a245b1afa971e3940596e1c500edf9548";
-const sdkRevision = "24929be0e741be6a5d0a7226f1c682e245263b8a"; // Element Call's frozen lockfile
-const root = fileURLToPath(new URL("../../../", import.meta.url));
-const cache = path.join(root, ".tmp");
-mkdirSync(cache, { recursive: true });
-const buildRoot = mkdtempSync(path.join(cache, "babacom-call-widget-"));
+import { execFileSync, execSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+
+import {
+    CALL_REVISION,
+    PATCH_PATH,
+    PROVENANCE_FILE,
+    SDK_REVISION,
+    callWidgetBuildRoot,
+    callWidgetDir,
+    callWidgetKey,
+    callWidgetProblem,
+} from "./babacom-call-widget.ts";
+
+const dist = callWidgetDir();
+if (process.argv.includes("--print-dir")) {
+    console.log(dist);
+    process.exit(0);
+}
+if (callWidgetProblem(dist) === null) {
+    console.log(`Patched Element Call widget is up to date: ${dist}`);
+    process.exit(0);
+}
+
+const buildRoot = callWidgetBuildRoot();
+rmSync(buildRoot, { recursive: true, force: true });
+mkdirSync(buildRoot, { recursive: true });
 const call = path.join(buildRoot, "element-call");
 const sdk = path.join(buildRoot, "matrix-js-sdk");
 
-checkout("https://github.com/element-hq/element-call.git", callRevision, call);
-const patch = path.join(root, "patches", "babacom-element-call-v0.26.0.patch");
-run("git", ["apply", "--check", patch], call);
-run("git", ["apply", patch], call);
+checkout("https://github.com/element-hq/element-call.git", CALL_REVISION, call);
+run("git", ["apply", "--check", PATCH_PATH], call);
+run("git", ["apply", PATCH_PATH], call);
 
 install(call);
 
 // Git-hosted SDK preparation invokes a nested package manager. Build the
 // exact locked SDK explicitly so Windows does not need a global pnpm shim.
-checkout("https://github.com/matrix-org/matrix-js-sdk.git", sdkRevision, sdk);
+checkout("https://github.com/matrix-org/matrix-js-sdk.git", SDK_REVISION, sdk);
 install(sdk, "pnpm@11.9.0");
 run(process.execPath, ["node_modules/@babel/cli/bin/babel.js", "-d", "lib", "--extensions", ".ts,.js", "src"], sdk);
 run(
@@ -44,9 +63,13 @@ run(process.execPath, ["node_modules/vite/bin/vite.js", "build", "--config", "vi
     VITE_APP_VERSION: "embedded-v0.26.0-babacom",
 });
 
-const dist = path.join(call, "dist");
-if (!existsSync(path.join(dist, "index.html"))) throw new Error("The Element Call build did not produce index.html");
-console.log(`BABACOM_CALL_WIDGET_DIR=${dist}`);
+writeFileSync(
+    path.join(dist, PROVENANCE_FILE),
+    JSON.stringify({ key: callWidgetKey(), callRevision: CALL_REVISION, sdkRevision: SDK_REVISION }, null, 4) + "\n",
+);
+const problem = callWidgetProblem(dist);
+if (problem) throw new Error(`The Element Call build is not usable: ${problem}`);
+console.log(`Built patched Element Call widget: ${dist}`);
 
 function checkout(remote, revision, destination) {
     mkdirSync(destination);
