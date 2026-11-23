@@ -4,6 +4,61 @@
 
 Element Desktop is a Matrix client for desktop platforms with Element Web at its core.
 
+## BabaCom local Windows candidate
+
+The unsigned candidate is in `dist/babacom-local-20261106/win-unpacked/`.
+It retains the upstream Element name and version.
+
+The embedded configuration targets `http://127.0.0.1:18008` (`proof.babacom.test`).
+Voice and widgets are enabled. Registration, guests and external integrations are disabled.
+Element Call is bundled locally and needs the dedicated Matrix and RTC services for calls.
+
+That configuration is tracked as `apps/web/config.babacom.json`; copy it to `apps/web/config.json` before building.
+It also loads BabaCom's Chinese strings from `apps/web/res/babacom-translations.json`. Keep BabaCom strings there, not in
+`src/i18n/strings/`, whose non-English files come from Element's translation service.
+
+Once the dedicated test service is restored, start each test account in a separate profile:
+
+```powershell
+Set-Location D:/Code/babacom/element-local/apps/desktop
+& './dist/babacom-local-20261106/win-unpacked/Element.exe' `
+    --profile-dir 'D:/Code/babacom/.matrix-runtime/g1/windows/client-a' --no-update
+```
+
+For the second account, use `client-b` in the same command.
+Sign in with the short usernames `proof-a` and `proof-b` in the respective windows.
+A full Matrix ID triggers server discovery. A short username uses the configured homeserver.
+Keep personal Element profiles separate.
+
+### Two-account acceptance
+
+1. Open the same test room in both profiles and confirm that messages reach the other account in each direction.
+2. Start and join an Element Call. Enable each microphone after its user approves, then confirm audio in both directions.
+3. Share a synthetic window with system audio off. Stop sharing, repeat with audio explicitly enabled, and check the
+   picture and audio from the receiving profile.
+4. Stop sharing, leave the call and exit both clients. Record the results separately for chat, voice, sharing and exit.
+
+The targeted unit suite passed 198 cases. Two-account acceptance is `NOT_RUN`.
+
+Build with the existing web `build`, desktop `build:ts` and `build:res` targets.
+Pack only the current `index.html` bundle directory into `webapp.asar`, retaining the other web assets.
+Exclude older bundle directories and source maps through the existing ASAR packer’s `globOptions.ignore`.
+Run electron-builder with `--win --x64 --dir --publish never` and the output directory above.
+For the existing local Python installation, set `$env:PYTHON = (uv.exe python find --no-python-downloads)`
+in that build session. Set `$env:CSC_IDENTITY_AUTO_DISCOVERY = "false"` for this unsigned candidate.
+The renderer was built in production mode with `CI_PACKAGE=1`, retaining unminified JavaScript.
+
+### Local artifact SHA256
+
+| Build date | Artifact                | SHA256                                                             |
+| ---------- | ----------------------- | ------------------------------------------------------------------ |
+| 2026-11-06 | `Element.exe`           | `afcbbd11c68af25d734a266ccb698cb69a606e64914b30dbd5643f35a4147d2c` |
+| 2026-11-06 | `resources/app.asar`    | `53e1f161320b34a236ff065c29c9c279ea4ae624b23e913e04bce83016135e0e` |
+| 2026-11-06 | `resources/webapp.asar` | `720103c1e345e629c3d3e322c6dcd1f5b16ea7ed8ad0b31d50117e2b87bf23d7` |
+| 2026-11-04 | `Element.exe`           | `2b303b6642f2e7db6b06536a691777f132d72985bc0a8fccd823c05e702f49dc` |
+| 2026-11-04 | `resources/app.asar`    | `53e1f161320b34a236ff065c29c9c279ea4ae624b23e913e04bce83016135e0e` |
+| 2026-11-04 | `resources/webapp.asar` | `9474256f1dd77ad88a84bac74a938f96c32f36f5c3b176d23324888a7d8f6a22` |
+
 # First Steps
 
 Before you do anything else, fetch the dependencies:

@@ -11,7 +11,6 @@ import { describe, expect, beforeEach, it, vi } from "vitest";
 import { AutoCollapse } from "./AutoCollapse";
 import { BaseCollapseBehaviour } from "./behaviours/BaseCollapseBehaviour";
 import type { CollapseHandler } from "./CollapseHandler";
-import { CallStore } from "../../../stores/CallStore";
 
 let instances: BaseCollapseBehaviour[] = [];
 
@@ -50,14 +49,14 @@ describe("AutoCollapse", () => {
     });
 
     it("should calculate initial collapse count correctly", () => {
-        const autoCollapse = new AutoCollapse(vi.fn(), vi.fn(), CallStore.instance);
+        const autoCollapse = new AutoCollapse(vi.fn(), vi.fn());
         // Since we have one behaviour that tells the app to start collapsed (MockBehaviourWithStartCollapsed),
         // isAutoCollapsed should be true from initialization.
         expect(autoCollapse.isAutoCollapsed).toBe(true);
     });
 
     it("should proxy onLeftPanelResized to collapseHandler", () => {
-        const autoCollapse = new AutoCollapse(vi.fn(), vi.fn(), CallStore.instance);
+        const autoCollapse = new AutoCollapse(vi.fn(), vi.fn());
         expect(autoCollapse.isAutoCollapsed).toBe(true);
         autoCollapse.onLeftPanelResized();
         expect(autoCollapse.isAutoCollapsed).toBe(false);
@@ -68,7 +67,7 @@ describe("AutoCollapse", () => {
     });
 
     it("should calculate shouldIgnoreResize correctly", () => {
-        const autoCollapse = new AutoCollapse(vi.fn(), vi.fn(), CallStore.instance);
+        const autoCollapse = new AutoCollapse(vi.fn(), vi.fn());
         // Because of MockBehaviourWithIgnoreResize, shouldIgnoreResize should be true.
         expect(autoCollapse.shouldIgnoreResize).toBe(true);
     });

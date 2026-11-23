@@ -19,6 +19,7 @@ import {
 import React from "react";
 import { logger } from "matrix-js-sdk/src/logger";
 import { uniqueId } from "lodash";
+import type { DesktopCaptureRequest, DesktopCaptureSelection } from "shared-types";
 
 import BasePlatform, { UpdateCheckStatus, type UpdateStatus } from "../../BasePlatform";
 import type BaseEventIndexManager from "../../indexing/BaseEventIndexManager";
@@ -36,6 +37,8 @@ import { type CheckUpdatesPayload } from "../../dispatcher/payloads/CheckUpdates
 import ToastStore from "../../stores/ToastStore";
 import GenericExpiringToast from "../../components/views/toasts/GenericExpiringToast";
 import { BreadcrumbsStore } from "../../stores/BreadcrumbsStore";
+import { CallStore, CallStoreEvent } from "../../stores/CallStore";
+import { CallEvent, ConnectionState } from "../../models/Call";
 import { UPDATE_EVENT } from "../../stores/AsyncStore";
 import { avatarUrlForRoom, getInitialLetter } from "../../Avatar";
 import DesktopCapturerSourcePicker from "../../components/views/elements/DesktopCapturerSourcePicker";
@@ -98,6 +101,7 @@ export default class ElectronPlatform extends BasePlatform {
     private config!: IConfigOptions;
     private supportedSettings?: Record<string, boolean>;
     private clientStartedPromiseWithResolvers = Promise.withResolvers<void>();
+    private desktopCapturerPicker?: { requestId: string; close: () => void };
 
     public constructor() {
         super();
@@ -150,6 +154,10 @@ export default class ElectronPlatform extends BasePlatform {
             dis.fire(Action.ViewUserSettings);
         });
 
+        this.electron.on("babacom-toggle-microphone", () => {
+            CallStore.instance.getActiveElementCall()?.toggleMicrophone();
+        });
+
         this.electron.on("userDownloadCompleted", (ev, { id, name }) => {
             const key = `DOWNLOAD_TOAST_${id}`;
 
@@ -178,11 +186,67 @@ export default class ElectronPlatform extends BasePlatform {
             });
         });
 
-        this.electron.on("openDesktopCapturerSourcePicker", async () => {
-            const { finished } = Modal.createDialog(DesktopCapturerSourcePicker);
-            const [source] = await finished;
-            // getDisplayMedia promise does not return if no dummy is passed here as source
-            await this.ipc.call("callDisplayMediaCallback", source ?? { id: "", name: "", thumbnailURL: "" });
+        this.electron.on("openDesktopCapturerSourcePicker", async (_event, request: DesktopCaptureRequest) => {
+            const { requestId, canShareSystemAudio, elementCallRoomId } = request;
+            this.desktopCapturerPicker?.close();
+            const store = CallStore.instance;
+            const active = elementCallRoomId === undefined ? undefined : store.getActiveElementCall();
+            if (
+                elementCallRoomId !== undefined &&
+                (active?.roomId !== elementCallRoomId || active.connectionState !== ConnectionState.Connected)
+            ) {
+                this.desktopCapturerPicker = undefined;
+                await this.ipc.call("callDisplayMediaCallback", { requestId, shareSystemAudio: false });
+                return;
+            }
+
+            const { finished, close } = Modal.createDialog(DesktopCapturerSourcePicker, {
+                canShareSystemAudio,
+                ...(active
+                    ? { elementCallRoomName: MatrixClientPeg.get()?.getRoom(active.roomId)?.name ?? active.roomId }
+                    : {}),
+            });
+            const isActiveCall = (): boolean =>
+                store.getActiveElementCall() === active && active?.connectionState === ConnectionState.Connected;
+            let invalid = false;
+            let selectionSent = false;
+            const checkActiveCall = (): void => {
+                if (invalid || isActiveCall()) return;
+                invalid = true;
+                if (selectionSent) {
+                    // The main process may still be validating the source. Revoke the same request before it is consumed.
+                    void this.ipc
+                        .call("callDisplayMediaCallback", { requestId, shareSystemAudio: false })
+                        .catch((error) => logger.warn("Could not cancel the screen capture request", error));
+                } else if (this.desktopCapturerPicker?.requestId === requestId) {
+                    close();
+                }
+            };
+            if (active) {
+                store.on(CallStoreEvent.ConnectedCalls, checkActiveCall);
+                active.on(CallEvent.ConnectionState, checkActiveCall);
+            }
+            this.desktopCapturerPicker = { requestId, close };
+
+            try {
+                const [source, shareSystemAudio] = await finished;
+                const currentPicker = this.desktopCapturerPicker?.requestId === requestId;
+                if (currentPicker) this.desktopCapturerPicker = undefined;
+
+                const canceled = active !== undefined && (!currentPicker || invalid || !isActiveCall());
+                const selection: DesktopCaptureSelection = {
+                    requestId,
+                    source: canceled ? undefined : source,
+                    shareSystemAudio: !canceled && shareSystemAudio === true,
+                };
+                selectionSent = selection.source !== undefined;
+                await this.ipc.call("callDisplayMediaCallback", selection);
+            } finally {
+                if (active) {
+                    store.off(CallStoreEvent.ConnectedCalls, checkActiveCall);
+                    active.off(CallEvent.ConnectionState, checkActiveCall);
+                }
+            }
         });
 
         this.electron.on("showToast", async (ev, { title, description, priority = 40 }) => {

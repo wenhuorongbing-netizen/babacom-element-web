@@ -13,7 +13,7 @@ import { logger } from "matrix-js-sdk/src/logger";
 import AutoDiscoveryUtils from "../../../utils/AutoDiscoveryUtils";
 import BaseDialog from "./BaseDialog";
 import { _t, UserFriendlyError } from "../../../languageHandler";
-import AccessibleButton from "../elements/AccessibleButton";
+import DialogButtons from "../elements/DialogButtons";
 import SdkConfig from "../../../SdkConfig";
 import Field from "../elements/Field";
 import StyledRadioButton from "../elements/StyledRadioButton";
@@ -36,7 +36,7 @@ interface IState {
 export default class ServerPickerDialog extends React.PureComponent<IProps, IState> {
     private readonly defaultServer: ValidatedServerConfig;
     private readonly fieldRef = createRef<Field>();
-    private validatedConf?: ValidatedServerConfig;
+    private submissionId = 0;
 
     public constructor(props: IProps) {
         super(props);
@@ -61,6 +61,7 @@ export default class ServerPickerDialog extends React.PureComponent<IProps, ISta
     }
 
     private onDefaultChosen = (): void => {
+        ++this.submissionId;
         this.setState({ defaultChosen: true });
     };
 
@@ -69,62 +70,68 @@ export default class ServerPickerDialog extends React.PureComponent<IProps, ISta
     };
 
     private onHomeserverChange = (ev: ChangeEvent<HTMLInputElement>): void => {
+        ++this.submissionId;
         this.setState({ otherHomeserver: ev.target.value });
     };
 
-    private validate = withValidation<this, { error?: string }>({
-        deriveData: async ({ value }): Promise<{ error?: string }> => {
-            let hsUrl = (value ?? "").trim(); // trim to account for random whitespace
+    private async validateHomeserver(
+        value: string | null,
+    ): Promise<{ config?: ValidatedServerConfig; error?: string }> {
+        let hsUrl = (value ?? "").trim(); // trim to account for random whitespace
 
-            // if the URL has no protocol, try validate it as a serverName via well-known
-            if (!hsUrl.includes("://")) {
-                try {
-                    const discoveryResult = await AutoDiscovery.findClientConfig(hsUrl);
-                    this.validatedConf = await AutoDiscoveryUtils.buildValidatedConfigFromDiscovery(
-                        hsUrl,
-                        discoveryResult,
-                    );
-                    return {}; // we have a validated config, we don't need to try the other paths
-                } catch (e) {
-                    logger.error(`Attempted ${hsUrl} as a server_name but it failed`, e);
-                }
-            }
-
-            // if we got to this stage then either the well-known failed or the URL had a protocol specified,
-            // so validate statically only. If the URL has no protocol, default to https.
-            if (!hsUrl.includes("://")) {
-                hsUrl = "https://" + hsUrl;
-            }
-
+        // if the URL has no protocol, try validate it as a serverName via well-known
+        if (!hsUrl.includes("://")) {
             try {
-                this.validatedConf = await AutoDiscoveryUtils.validateServerConfigWithStaticUrls(hsUrl);
-                return {};
+                const discoveryResult = await AutoDiscovery.findClientConfig(hsUrl);
+                const config = await AutoDiscoveryUtils.buildValidatedConfigFromDiscovery(hsUrl, discoveryResult);
+                return { config };
+            } catch (e) {
+                logger.error(`Attempted ${hsUrl} as a server_name but it failed`, e);
+            }
+        }
+
+        // if we got to this stage then either the well-known failed or the URL had a protocol specified,
+        // so validate statically only. If the URL has no protocol, default to https.
+        if (!hsUrl.includes("://")) {
+            hsUrl = "https://" + hsUrl;
+        }
+
+        try {
+            if (!new URL(hsUrl).hostname) {
+                return { error: _t("auth|server_picker_invalid_url") };
+            }
+        } catch {
+            return { error: _t("auth|server_picker_invalid_url") };
+        }
+
+        try {
+            const config = await AutoDiscoveryUtils.validateServerConfigWithStaticUrls(hsUrl);
+            return { config };
+        } catch (e) {
+            logger.error(e);
+
+            const stateForError = AutoDiscoveryUtils.authComponentStateForError(e);
+            if (stateForError.serverErrorIsFatal) {
+                let error = _t("auth|server_picker_failed_validate_homeserver");
+                if (e instanceof UserFriendlyError && e.translatedMessage) {
+                    error = e.translatedMessage;
+                }
+                return { error };
+            }
+
+            // try to carry on anyway
+            try {
+                const config = await AutoDiscoveryUtils.validateServerConfigWithStaticUrls(hsUrl, undefined, true);
+                return { config };
             } catch (e) {
                 logger.error(e);
-
-                const stateForError = AutoDiscoveryUtils.authComponentStateForError(e);
-                if (stateForError.serverErrorIsFatal) {
-                    let error = _t("auth|server_picker_failed_validate_homeserver");
-                    if (e instanceof UserFriendlyError && e.translatedMessage) {
-                        error = e.translatedMessage;
-                    }
-                    return { error };
-                }
-
-                // try to carry on anyway
-                try {
-                    this.validatedConf = await AutoDiscoveryUtils.validateServerConfigWithStaticUrls(
-                        hsUrl,
-                        undefined,
-                        true,
-                    );
-                    return {};
-                } catch (e) {
-                    logger.error(e);
-                    return { error: _t("auth|server_picker_invalid_url") };
-                }
+                return { error: _t("auth|server_picker_invalid_url") };
             }
-        },
+        }
+    }
+
+    private validate = withValidation<this, { error?: string }>({
+        deriveData: ({ value }) => this.validateHomeserver(value),
         rules: [
             {
                 key: "required",
@@ -146,23 +153,32 @@ export default class ServerPickerDialog extends React.PureComponent<IProps, ISta
 
     private onHomeserverValidate = (fieldState: IFieldState): Promise<IValidationResult> => this.validate(fieldState);
 
+    private onCancel = (): void => {
+        ++this.submissionId;
+        this.props.onFinished();
+    };
+
     private onSubmit = async (ev: SyntheticEvent): Promise<void> => {
         ev.preventDefault();
 
+        const submissionId = ++this.submissionId;
         if (this.state.defaultChosen) {
             this.props.onFinished(this.defaultServer);
             return;
         }
 
-        const valid = await this.fieldRef.current?.validate({ allowEmpty: false });
+        const { otherHomeserver } = this.state;
+        const config = otherHomeserver ? (await this.validateHomeserver(otherHomeserver)).config : undefined;
+        const field = this.fieldRef.current;
+        // Edits and dismissal invalidate a submission even if its request still succeeds.
+        if (!field || this.submissionId !== submissionId) return;
 
-        if (!valid) {
-            this.fieldRef.current?.focus();
-            void this.fieldRef.current?.validate({ allowEmpty: false, focused: true });
-            return;
+        if (config) {
+            this.props.onFinished(config);
+        } else {
+            field.focus();
+            void field.validate({ allowEmpty: false, focused: true });
         }
-
-        this.props.onFinished(this.validatedConf);
     };
 
     public render(): React.ReactNode {
@@ -185,14 +201,12 @@ export default class ServerPickerDialog extends React.PureComponent<IProps, ISta
                 title={this.props.title || _t("auth|server_picker_title")}
                 className="mx_ServerPickerDialog"
                 contentId="mx_ServerPickerDialog"
-                onFinished={this.props.onFinished}
+                onFinished={this.onCancel}
                 fixedWidth={false}
                 hasCancel={true}
             >
                 <form className="mx_Dialog_content" id="mx_ServerPickerDialog" onSubmit={this.onSubmit}>
-                    <p>
-                        {_t("auth|server_picker_intro")} {text}
-                    </p>
+                    <p>{_t("auth|server_picker_intro")}</p>
 
                     <StyledRadioButton
                         name="defaultChosen"
@@ -224,24 +238,28 @@ export default class ServerPickerDialog extends React.PureComponent<IProps, ISta
                             value={this.state.otherHomeserver}
                             validateOnChange={false}
                             validateOnFocus={false}
-                            autoFocus={true}
+                            autoFocus={!this.state.defaultChosen}
                             id="mx_homeserverInput"
                         />
                     </StyledRadioButton>
-                    <p>{_t("auth|server_picker_explainer")}</p>
+                    <details>
+                        <summary>{_t("action|learn_more")}</summary>
+                        <p>{_t("auth|server_picker_explainer")}</p>
+                        {text && <p>{text}</p>}
+                        <ExternalLink
+                            href="https://matrix.org/docs/matrix-concepts/elements-of-matrix/#homeserver"
+                            target="_blank"
+                            rel="noreferrer noopener"
+                        >
+                            {_t("auth|server_picker_learn_more")}
+                        </ExternalLink>
+                    </details>
 
-                    <AccessibleButton className="mx_ServerPickerDialog_continue" kind="primary" onClick={this.onSubmit}>
-                        {_t("action|continue")}
-                    </AccessibleButton>
-
-                    <h2>{_t("action|learn_more")}</h2>
-                    <ExternalLink
-                        href="https://matrix.org/docs/matrix-concepts/elements-of-matrix/#homeserver"
-                        target="_blank"
-                        rel="noreferrer noopener"
-                    >
-                        {_t("auth|server_picker_learn_more")}
-                    </ExternalLink>
+                    <DialogButtons
+                        primaryButton={_t("action|continue")}
+                        primaryIsSubmit={true}
+                        onCancel={this.onCancel}
+                    />
                 </form>
             </BaseDialog>
         );

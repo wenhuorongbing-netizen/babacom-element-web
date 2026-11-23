@@ -902,6 +902,24 @@ describe("ElementCall", () => {
             await expect(call.disconnect()).rejects.toBeDefined();
         });
 
+        it("cleans up a timed-out hangup without acknowledging a late response", async () => {
+            await connect(call, widgetApi);
+            const hangupEvent = `action:${ElementWidgetActions.HangupCall}`;
+            expect(widgetApi.listenerCount(hangupEvent)).toBe(1);
+
+            const disconnectPromise = call.disconnect();
+            expect(widgetApi.listenerCount(hangupEvent)).toBe(2);
+            const timeoutPromise = vi.advanceTimersByTimeAsync(16000);
+            await expect(disconnectPromise).rejects.toThrow("Failed to hangup call");
+            await timeoutPromise;
+
+            expect(widgetApi.listenerCount(hangupEvent)).toBe(1);
+            expect(call.connectionState).toBe(ConnectionState.Disconnecting);
+            vi.mocked(widgetApi.transport).reply.mockClear();
+            widgetApi.emit(hangupEvent, new CustomEvent("widgetapirequest", {}));
+            expect(widgetApi.transport.reply).not.toHaveBeenCalled();
+        });
+
         it("handles remote disconnection", async () => {
             expect(call.connectionState).toBe(ConnectionState.Disconnected);
 
@@ -928,6 +946,20 @@ describe("ElementCall", () => {
             expect(call.connectionState).toBe(ConnectionState.Disconnected);
         });
 
+        it.each([KnownMembership.Leave, KnownMembership.Ban])(
+            "remains disconnected after a late widget join when membership is %s",
+            async (membership) => {
+                await connect(call, widgetApi);
+                expect(call.connectionState).toBe(ConnectionState.Connected);
+                vi.mocked(room.getMyMembership).mockReturnValue(membership);
+                expect(room.getMyMembership()).not.toBe(KnownMembership.Join);
+                room.emit(RoomEvent.MyMembership, room, membership);
+                expect(call.connectionState).toBe(ConnectionState.Disconnected);
+                widgetApi.emit(`action:${ElementWidgetActions.JoinCall}`, new CustomEvent("widgetapirequest", {}));
+                expect(call.connectionState).toBe(ConnectionState.Disconnected);
+            },
+        );
+
         it("remains connected if we stay in the room", async () => {
             await connect(call, widgetApi);
             expect(call.connectionState).toBe(ConnectionState.Connected);
@@ -942,6 +974,97 @@ describe("ElementCall", () => {
             expect(call.connectionState).toBe(ConnectionState.Disconnected);
         });
 
+        it("clears pending only on a DeviceMute notification with audio_enabled", async () => {
+            await connect(call, widgetApi);
+            vi.mocked(widgetApi.transport).send.mockClear();
+            vi.mocked(widgetApi.transport).send.mockResolvedValueOnce({});
+
+            call.toggleMicrophone();
+            expect(widgetApi.transport.send).toHaveBeenCalledWith(ElementWidgetActions.DeviceMute, {
+                audio_enabled: false,
+            });
+
+            // A resolved outgoing request is not a notification: still pending.
+            await Promise.resolve();
+            expect(call.microphoneState.pending).toBe(true);
+
+            // Camera-only and malformed payloads are acknowledged but leave audio untouched.
+            const enabledBefore = call.microphoneState.enabled;
+            const cameraOnly = { preventDefault: vi.fn(), detail: { data: { video_enabled: false } } };
+            widgetApi.emit(`action:${ElementWidgetActions.DeviceMute}`, cameraOnly);
+            expect(cameraOnly.preventDefault).toHaveBeenCalled();
+            expect(widgetApi.transport.reply).toHaveBeenCalled();
+            expect(call.microphoneState.pending).toBe(true);
+            expect(call.microphoneState.enabled).toBe(enabledBefore);
+
+            const malformed = { preventDefault: vi.fn(), detail: { data: { audio_enabled: "yes" } } };
+            widgetApi.emit(`action:${ElementWidgetActions.DeviceMute}`, malformed);
+            expect(malformed.preventDefault).toHaveBeenCalled();
+            expect(call.microphoneState.pending).toBe(true);
+            expect(call.microphoneState.enabled).toBe(enabledBefore);
+
+            // Only the requested audio value confirms the change.
+            widgetApi.emit(`action:${ElementWidgetActions.DeviceMute}`, {
+                preventDefault: vi.fn(),
+                detail: { data: { audio_enabled: true } },
+            });
+            expect(call.microphoneState.pending).toBe(true);
+
+            // A valid notification clears pending and sets enabled.
+            const notification = { preventDefault: vi.fn(), detail: { data: { audio_enabled: false } } };
+            widgetApi.emit(`action:${ElementWidgetActions.DeviceMute}`, notification);
+            expect(call.microphoneState).toEqual({ enabled: false, pending: false, error: false });
+        });
+
+        it("ignores repeated toggles while the microphone change is pending", async () => {
+            await connect(call, widgetApi);
+            vi.mocked(widgetApi.transport).send.mockClear();
+
+            call.toggleMicrophone();
+            call.toggleMicrophone();
+            call.toggleMicrophone();
+
+            const muteCalls = vi
+                .mocked(widgetApi.transport.send)
+                .mock.calls.filter(([action]) => action === ElementWidgetActions.DeviceMute);
+            expect(muteCalls).toHaveLength(1);
+            expect(call.microphoneState.pending).toBe(true);
+        });
+
+        it("clears pending and sets error when the widget rejects the mute request", async () => {
+            await connect(call, widgetApi);
+            vi.mocked(widgetApi.transport).send.mockRejectedValueOnce(new Error("never!"));
+
+            call.toggleMicrophone();
+
+            await waitFor(() => expect(call.microphoneState).toEqual({ enabled: null, pending: false, error: true }));
+        });
+
+        it("clears microphone state when leaving the room and ignores late results", async () => {
+            await connect(call, widgetApi);
+
+            let rejectSend!: (reason: unknown) => void;
+            vi.mocked(widgetApi.transport).send.mockReturnValueOnce(
+                new Promise((_, reject) => {
+                    rejectSend = reject;
+                }),
+            );
+
+            call.toggleMicrophone();
+            expect(call.microphoneState.pending).toBe(true);
+
+            room.emit(RoomEvent.MyMembership, room, KnownMembership.Leave);
+            expect(call.microphoneState).toEqual({ enabled: null, pending: false, error: false });
+
+            // Late rejection and late notification must not repopulate the state.
+            rejectSend(new Error("late"));
+            widgetApi.emit(`action:${ElementWidgetActions.DeviceMute}`, {
+                preventDefault: vi.fn(),
+                detail: { data: { audio_enabled: true } },
+            });
+            await Promise.resolve();
+            expect(call.microphoneState).toEqual({ enabled: null, pending: false, error: false });
+        });
         it("acknowledges mute_device widget action", async () => {
             await connect(call, widgetApi);
             const preventDefault = vi.fn();

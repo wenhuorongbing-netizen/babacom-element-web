@@ -65,13 +65,16 @@ const waitForEvent = async (
         emitter.on(event, listener);
     });
 
-    if (customTimeout !== false) {
-        const timedOut = (await timeout(wait, false, customTimeout ?? TIMEOUT_MS)) === false;
-        if (timedOut) throw new Error("Timed out");
-    } else {
-        await wait;
+    try {
+        if (customTimeout !== false) {
+            const timedOut = (await timeout(wait, false, customTimeout ?? TIMEOUT_MS)) === false;
+            if (timedOut) throw new Error("Timed out");
+        } else {
+            await wait;
+        }
+    } finally {
+        emitter.off(event, listener!);
     }
-    emitter.off(event, listener!);
 };
 
 export enum ConnectionState {
@@ -89,8 +92,15 @@ export enum CallEvent {
     Close = "close",
     Destroy = "destroy",
     CallTypeChanged = "call_type_changed",
+    MicrophoneState = "microphone_state",
 }
 
+/** Microphone state reported by the active Element Call widget. */
+export interface CallMicrophoneState {
+    readonly enabled: boolean | null;
+    readonly pending: boolean;
+    readonly error: boolean;
+}
 interface CallEventHandlerMap {
     [CallEvent.ConnectionState]: (state: ConnectionState, prevState: ConnectionState) => void;
     [CallEvent.Participants]: (
@@ -100,6 +110,7 @@ interface CallEventHandlerMap {
     [CallEvent.Close]: () => void;
     [CallEvent.Destroy]: () => void;
     [CallEvent.CallTypeChanged]: (callType: CallType) => void;
+    [CallEvent.MicrophoneState]: (state: CallMicrophoneState) => void;
 }
 
 /**
@@ -639,6 +650,13 @@ export class ElementCall extends Call {
     private settingsStoreCallEncryptionWatcher?: string;
     private terminationTimer?: number;
 
+    private microphone: CallMicrophoneState = { enabled: null, pending: false, error: false };
+    private microphoneRequest?: { enabled: boolean; timer: number };
+
+    /** The device state reported by the widget, and any pending host request. */
+    public get microphoneState(): CallMicrophoneState {
+        return this.microphone;
+    }
     public get presented(): boolean {
         return super.presented;
     }
@@ -942,6 +960,7 @@ export class ElementCall extends Call {
         this.widgetApi!.off(`action:${ElementWidgetActions.HangupCall}`, this.onHangup);
         this.widgetApi!.off(`action:${ElementWidgetActions.Close}`, this.onClose);
         this.widgetApi!.off(`action:${ElementWidgetActions.DeviceMute}`, this.onDeviceMute);
+        this.resetMicrophoneState();
         super.close();
     }
 
@@ -987,15 +1006,89 @@ export class ElementCall extends Call {
         this.participants = participants;
     }
 
+    /** Change only the microphone. With an unknown state, only a mute may be requested. */
+    public toggleMicrophone(): void {
+        const widgetApi = this.widgetApi;
+        if (this.connectionState !== ConnectionState.Connected || !widgetApi || this.microphoneRequest) return;
+
+        const enabled = this.microphone.enabled === false;
+        const fail = (): void => {
+            if (this.microphoneRequest !== request) return;
+            this.clearMicrophoneRequest();
+            this.setMicrophoneState({ enabled: null, pending: false, error: true });
+        };
+        const request = { enabled, timer: window.setTimeout(fail, TIMEOUT_MS) };
+        this.microphoneRequest = request;
+        this.setMicrophoneState({ ...this.microphone, pending: true, error: false });
+        if (this.microphoneRequest !== request) return;
+
+        // The request reply is an acknowledgement. The widget reports its state separately.
+        const send = async (): Promise<void> => {
+            await widgetApi.transport.send(ElementWidgetActions.DeviceMute, { audio_enabled: enabled });
+        };
+        void send().catch(fail);
+    }
+
+    protected override setDisconnected(): void {
+        super.setDisconnected();
+        this.resetMicrophoneState();
+    }
+
+    private clearMicrophoneRequest(): void {
+        window.clearTimeout(this.microphoneRequest?.timer);
+        this.microphoneRequest = undefined;
+    }
+
+    private resetMicrophoneState(): void {
+        this.clearMicrophoneRequest();
+        this.setMicrophoneState({ enabled: null, pending: false, error: false });
+    }
+
+    private setMicrophoneState(state: CallMicrophoneState): void {
+        this.microphone = state;
+        this.emit(CallEvent.MicrophoneState, state);
+    }
+
+    private async readMicrophoneSnapshot(): Promise<void> {
+        const widgetApi = this.widgetApi;
+        const previous = this.microphone;
+        if (!widgetApi || previous.enabled !== null || previous.pending) return;
+
+        try {
+            const response = await widgetApi.transport.send<{ audio_enabled?: unknown }>(
+                ElementWidgetActions.DeviceMute,
+                {},
+            );
+            const enabled = response?.audio_enabled;
+            if (
+                typeof enabled === "boolean" &&
+                this.widgetApi === widgetApi &&
+                this.connectionState === ConnectionState.Connected &&
+                this.microphone === previous
+            ) {
+                this.setMicrophoneState({ enabled, pending: false, error: false });
+            }
+        } catch (e) {
+            logger.debug("Could not read the call microphone state", e);
+        }
+    }
     private readonly onDeviceMute = (ev: CustomEvent<IWidgetApiRequest>): void => {
         ev.preventDefault();
         this.widgetApi!.transport.reply(ev.detail, {}); // ack
+
+        const enabled = ev.detail.data?.audio_enabled;
+        if (typeof enabled !== "boolean" || this.connectionState === ConnectionState.Disconnected) return;
+
+        if (this.microphoneRequest?.enabled === enabled) this.clearMicrophoneRequest();
+        this.setMicrophoneState({ enabled, pending: Boolean(this.microphoneRequest), error: false });
     };
 
     private readonly onJoin = (ev: CustomEvent<IWidgetApiRequest>): void => {
         ev.preventDefault();
         this.widgetApi!.transport.reply(ev.detail, {}); // ack
+        if (this.room.getMyMembership() !== KnownMembership.Join) return;
         this.setConnected();
+        void this.readMicrophoneSnapshot();
     };
 
     private readonly onHangup = async (ev: CustomEvent<IWidgetApiRequest>): Promise<void> => {

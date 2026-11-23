@@ -24,6 +24,8 @@ import Modal from "../../Modal";
 import DesktopCapturerSourcePicker from "../../components/views/elements/DesktopCapturerSourcePicker";
 import ElectronPlatform from "./ElectronPlatform";
 import ToastStore from "../../stores/ToastStore.ts";
+import { CallStore, CallStoreEvent } from "../../stores/CallStore";
+import { ConnectionState, type ElementCall } from "../../models/Call";
 
 vi.mock("../../rageshake/rageshake", () => ({
     flush: vi.fn(),
@@ -66,6 +68,21 @@ describe("ElectronPlatform", () => {
     ): [type: string, handler: (...args: any) => void] | undefined =>
         mockElectron.on.mock.calls.find(([type]) => type === eventType);
 
+    it("routes the application mute shortcut to the connected Element Call only", () => {
+        new ElectronPlatform();
+        const handler = getElectronEventHandlerCall("babacom-toggle-microphone")?.[1];
+        const call = { toggleMicrophone: vi.fn() } as unknown as ElementCall;
+        const activeCall = vi.spyOn(CallStore.instance, "getActiveElementCall").mockReturnValueOnce(call);
+        try {
+            expect(handler).toBeDefined();
+            handler?.();
+            handler?.();
+            expect(call.toggleMicrophone).toHaveBeenCalledTimes(1);
+        } finally {
+            activeCall.mockRestore();
+        }
+    });
+
     it("flushes rageshake before quitting", () => {
         new ElectronPlatform();
         const [event, handler] = getElectronEventHandlerCall("before-quit")!;
@@ -100,33 +117,216 @@ describe("ElectronPlatform", () => {
         expect(dispatchFireSpy).toHaveBeenCalledWith(Action.ViewUserSettings);
     });
 
-    it("creates a modal on openDesktopCapturerSourcePicker", async () => {
-        const plat = new ElectronPlatform();
-        Modal.createDialog = vi.fn();
+    describe("desktop capture consent", () => {
+        const source = { id: "screen:1", name: "Screen 1", thumbnailURL: "data:thumb" };
 
-        // @ts-ignore mock
-        vi.mocked(Modal.createDialog).mockReturnValue({
-            finished: new Promise((r) => r(["source"])),
+        beforeEach(() => {
+            vi.spyOn(Modal, "createDialog");
         });
 
-        let res: () => void;
-        const waitForIPCSend = new Promise<void>((r) => {
-            res = r;
-        });
-        // @ts-ignore mock
-        vi.spyOn(plat.ipc, "call").mockImplementation(() => {
-            res();
+        afterEach(() => {
+            vi.mocked(Modal.createDialog).mockRestore();
         });
 
-        const [event, handler] = getElectronEventHandlerCall("openDesktopCapturerSourcePicker")!;
-        handler();
+        it.each([true, false, undefined, "true"])("passes the request ID and explicit consent %s", async (consent) => {
+            new ElectronPlatform();
+            vi.mocked(Modal.createDialog).mockReturnValue({
+                finished: Promise.resolve([source, consent]),
+                close: vi.fn(),
+            });
+            const [, handler] = getElectronEventHandlerCall("openDesktopCapturerSourcePicker")!;
+            handler({}, { requestId: "request-a", canShareSystemAudio: true });
 
-        await waitForIPCSend;
+            expect(Modal.createDialog).toHaveBeenCalledWith(DesktopCapturerSourcePicker, { canShareSystemAudio: true });
+            await waitFor(() =>
+                expect(mockElectron.send).toHaveBeenCalledWith("ipcCall", {
+                    id: expect.any(Number),
+                    name: "callDisplayMediaCallback",
+                    args: [{ requestId: "request-a", source, shareSystemAudio: consent === true }],
+                }),
+            );
+        });
 
-        expect(event).toBeTruthy();
-        expect(Modal.createDialog).toHaveBeenCalledWith(DesktopCapturerSourcePicker);
-        // @ts-ignore mock
-        expect(plat.ipc.call).toHaveBeenCalledWith("callDisplayMediaCallback", "source");
+        it("passes audio availability and replies to cancellation without consent", async () => {
+            new ElectronPlatform();
+            vi.mocked(Modal.createDialog).mockReturnValue({ finished: Promise.resolve([]), close: vi.fn() });
+            const [, handler] = getElectronEventHandlerCall("openDesktopCapturerSourcePicker")!;
+            handler({}, { requestId: "request-a", canShareSystemAudio: false });
+
+            expect(Modal.createDialog).toHaveBeenCalledWith(DesktopCapturerSourcePicker, {
+                canShareSystemAudio: false,
+            });
+            await waitFor(() =>
+                expect(mockElectron.send).toHaveBeenCalledWith("ipcCall", {
+                    id: expect.any(Number),
+                    name: "callDisplayMediaCallback",
+                    args: [{ requestId: "request-a", source: undefined, shareSystemAudio: false }],
+                }),
+            );
+        });
+
+        it("keeps each dialog reply bound to its own request when the older dialog finishes last", async () => {
+            new ElectronPlatform();
+            const first = Promise.withResolvers<[DesktopCapturerSource, boolean]>();
+            const second = Promise.withResolvers<[DesktopCapturerSource, boolean]>();
+            vi.mocked(Modal.createDialog)
+                .mockReturnValueOnce({ finished: first.promise, close: vi.fn() })
+                .mockReturnValueOnce({ finished: second.promise, close: vi.fn() });
+            const [, handler] = getElectronEventHandlerCall("openDesktopCapturerSourcePicker")!;
+            handler({}, { requestId: "request-a", canShareSystemAudio: true });
+            handler({}, { requestId: "request-b", canShareSystemAudio: true });
+            second.resolve([source, false]);
+            first.resolve([source, true]);
+
+            await waitFor(() => expect(mockElectron.send).toHaveBeenCalledTimes(2));
+            expect(mockElectron.send.mock.calls.map(([, payload]) => payload)).toEqual([
+                {
+                    id: expect.any(Number),
+                    name: "callDisplayMediaCallback",
+                    args: [{ requestId: "request-b", source, shareSystemAudio: false }],
+                },
+                {
+                    id: expect.any(Number),
+                    name: "callDisplayMediaCallback",
+                    args: [{ requestId: "request-a", source, shareSystemAudio: true }],
+                },
+            ]);
+        });
+
+        it("closes the previous picker before opening its replacement", () => {
+            new ElectronPlatform();
+            const closeFirst = vi.fn();
+            vi.mocked(Modal.createDialog)
+                .mockReturnValueOnce({ finished: new Promise(() => {}), close: closeFirst })
+                .mockReturnValueOnce({ finished: new Promise(() => {}), close: vi.fn() });
+            const [, handler] = getElectronEventHandlerCall("openDesktopCapturerSourcePicker")!;
+            handler({}, { requestId: "request-a", canShareSystemAudio: true });
+            handler({}, { requestId: "request-b", canShareSystemAudio: true });
+
+            expect(closeFirst).toHaveBeenCalledExactlyOnceWith();
+            expect(closeFirst.mock.invocationCallOrder[0]).toBeLessThan(
+                vi.mocked(Modal.createDialog).mock.invocationCallOrder[1],
+            );
+        });
+
+        it("keeps the new picker active when closing the old picker finishes its promise", async () => {
+            new ElectronPlatform();
+            const first = Promise.withResolvers<[]>();
+            const closeFirst = vi.fn(() => first.resolve([]));
+            const closeSecond = vi.fn();
+            vi.mocked(Modal.createDialog)
+                .mockReturnValueOnce({ finished: first.promise, close: closeFirst })
+                .mockReturnValueOnce({ finished: new Promise(() => {}), close: closeSecond })
+                .mockReturnValueOnce({ finished: new Promise(() => {}), close: vi.fn() });
+            const [, handler] = getElectronEventHandlerCall("openDesktopCapturerSourcePicker")!;
+            handler({}, { requestId: "request-a", canShareSystemAudio: true });
+            handler({}, { requestId: "request-b", canShareSystemAudio: true });
+            await waitFor(() =>
+                expect(mockElectron.send).toHaveBeenCalledWith("ipcCall", {
+                    id: expect.any(Number),
+                    name: "callDisplayMediaCallback",
+                    args: [{ requestId: "request-a", source: undefined, shareSystemAudio: false }],
+                }),
+            );
+            handler({}, { requestId: "request-c", canShareSystemAudio: true });
+
+            expect(closeFirst).toHaveBeenCalledTimes(1);
+            expect(closeSecond).toHaveBeenCalledExactlyOnceWith();
+        });
+
+        it("does not close a picker again after the user has finished it", async () => {
+            new ElectronPlatform();
+            const closeFirst = vi.fn();
+            vi.mocked(Modal.createDialog)
+                .mockReturnValueOnce({ finished: Promise.resolve([]), close: closeFirst })
+                .mockReturnValueOnce({ finished: new Promise(() => {}), close: vi.fn() });
+            const [, handler] = getElectronEventHandlerCall("openDesktopCapturerSourcePicker")!;
+            handler({}, { requestId: "request-a", canShareSystemAudio: true });
+            await waitFor(() => expect(mockElectron.send).toHaveBeenCalledTimes(1));
+            handler({}, { requestId: "request-b", canShareSystemAudio: true });
+
+            expect(closeFirst).not.toHaveBeenCalled();
+        });
+
+        it("cancels the Element Call picker when its call leaves, even if the dialog replies with a source", async () => {
+            new ElectronPlatform();
+            const call = {
+                roomId: "!call:localhost",
+                connectionState: ConnectionState.Connected,
+                on: vi.fn(),
+                off: vi.fn(),
+            } as unknown as ElementCall;
+            const store = CallStore.instance;
+            const getActiveCall = vi.spyOn(store, "getActiveElementCall").mockReturnValue(call);
+            const result = Promise.withResolvers<[DesktopCapturerSource, boolean]>();
+            const close = vi.fn();
+            vi.mocked(Modal.createDialog).mockReturnValue({ finished: result.promise, close });
+            try {
+                const [, handler] = getElectronEventHandlerCall("openDesktopCapturerSourcePicker")!;
+                handler({}, { requestId: "request-a", canShareSystemAudio: true, elementCallRoomId: call.roomId });
+
+                getActiveCall.mockReturnValue(undefined);
+                store.emit(CallStoreEvent.ConnectedCalls, new Set(), new Set([call]));
+                expect(close).toHaveBeenCalledOnce();
+                result.resolve([source, true]);
+
+                await waitFor(() =>
+                    expect(mockElectron.send).toHaveBeenCalledWith("ipcCall", {
+                        id: expect.any(Number),
+                        name: "callDisplayMediaCallback",
+                        args: [{ requestId: "request-a", source: undefined, shareSystemAudio: false }],
+                    }),
+                );
+            } finally {
+                getActiveCall.mockRestore();
+            }
+        });
+
+        it("revokes the selected source if the call leaves during native validation", async () => {
+            new ElectronPlatform();
+            const call = {
+                roomId: "!call:localhost",
+                connectionState: ConnectionState.Connected,
+                on: vi.fn(),
+                off: vi.fn(),
+            } as unknown as ElementCall;
+            const store = CallStore.instance;
+            const getActiveCall = vi.spyOn(store, "getActiveElementCall").mockReturnValue(call);
+            const close = vi.fn();
+            vi.mocked(Modal.createDialog).mockReturnValue({
+                finished: Promise.resolve([source, true]),
+                close,
+            });
+
+            try {
+                const [, openPicker] = getElectronEventHandlerCall("openDesktopCapturerSourcePicker")!;
+                const [, reply] = getElectronEventHandlerCall("ipcReply")!;
+                openPicker(
+                    {},
+                    {
+                        requestId: "request-a",
+                        canShareSystemAudio: true,
+                        elementCallRoomId: call.roomId,
+                    },
+                );
+                await waitFor(() => expect(mockElectron.send).toHaveBeenCalledTimes(1));
+
+                getActiveCall.mockReturnValue(undefined);
+                store.emit(CallStoreEvent.ConnectedCalls, new Set(), new Set([call]));
+                expect(close).not.toHaveBeenCalled();
+                expect(mockElectron.send).toHaveBeenNthCalledWith(2, "ipcCall", {
+                    id: 2,
+                    name: "callDisplayMediaCallback",
+                    args: [{ requestId: "request-a", shareSystemAudio: false }],
+                });
+
+                reply({}, { id: 2, reply: null });
+                reply({}, { id: 1, reply: null });
+                await waitFor(() => expect(call.off).toHaveBeenCalledOnce());
+            } finally {
+                getActiveCall.mockRestore();
+            }
+        });
     });
 
     it("should show a toast when showToast is fired", async () => {

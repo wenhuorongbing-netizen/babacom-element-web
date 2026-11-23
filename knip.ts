@@ -131,6 +131,8 @@ export default {
     ignoreBinaries: [
         // Optional for coverage:diff development script
         "diff-cover",
+        // Windows fallback in apps/web/scripts/build-babacom-call-widget.mjs
+        "corepack.cmd",
     ],
     compilers: {
         pcss: (text: string) =>

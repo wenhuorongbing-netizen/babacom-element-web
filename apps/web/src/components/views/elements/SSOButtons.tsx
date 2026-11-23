@@ -13,7 +13,7 @@ import {
     type MatrixClient,
     IdentityProviderBrand,
     type SSOFlow,
-    type SSOAction,
+    SSOAction,
     type IIdentityProvider,
     OAUTH_AWARE_PREFERRED_FLOW_FIELD,
 } from "matrix-js-sdk/src/matrix";
@@ -91,7 +91,7 @@ const SSOButton: React.FC<ISSOButtonProps> = ({
     if (idp) {
         label = _t("auth|continue_with_idp", { provider: idp.name });
     } else if (OAUTH_AWARE_PREFERRED_FLOW_FIELD.findIn<boolean>(flow)) {
-        label = _t("action|continue");
+        label = action === SSOAction.LOGIN ? _t("auth|continue_signing_in") : _t("action|continue");
     } else {
         label = _t("auth|sign_in_with_sso");
     }

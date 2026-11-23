@@ -188,7 +188,7 @@ class LoggedInView extends React.Component<IProps, IState> {
 
     private getResizerViewModel(): ResizerViewModel {
         if (!this.resizerViewModel) {
-            this.resizerViewModel = new ResizerViewModel(this.context.callStore);
+            this.resizerViewModel = new ResizerViewModel();
         }
         return this.resizerViewModel;
     }
@@ -678,6 +678,7 @@ class LoggedInView extends React.Component<IProps, IState> {
 
         const leftPanel = (
             <div className="mx_LeftPanel_outerWrapper">
+                {!moduleRenderer && <ToastContainer />}
                 <LeftPanelLiveShareWarning isMinimized={false} />
                 <div className={leftPanelWrapperClasses}>
                     {!moduleRenderer && (
@@ -733,7 +734,7 @@ class LoggedInView extends React.Component<IProps, IState> {
                     className={wrapperClasses}
                     aria-hidden={this.props.hideToSRUsers}
                 >
-                    <ToastContainer />
+                    {moduleRenderer && <ToastContainer />}
                     <div className={bodyClasses}>{content}</div>
                 </div>
                 <PipContainer />

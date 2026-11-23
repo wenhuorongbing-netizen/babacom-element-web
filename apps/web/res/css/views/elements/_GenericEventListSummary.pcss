@@ -28,16 +28,51 @@ Please see LICENSE files in the repository root for full details.
         text-transform: lowercase;
     }
 
+    > .mx_EventTile_line {
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
     &[data-layout="irc"],
     &[data-layout="group"] {
         .mx_GenericEventListSummary_toggle {
-            float: right;
-            margin-inline: 0 10px;
+            float: inline-start;
+            margin-inline: 0 var(--cpd-space-2x);
+        }
+
+        &[data-expanded="false"] {
+            display: flex;
+            align-items: baseline;
+            column-gap: var(--cpd-space-2x);
+
+            .mx_GenericEventListSummary_toggle {
+                order: 1;
+                flex-shrink: 0;
+            }
         }
     }
 
     &[data-layout="group"] {
         margin-top: var(--cpd-space-2x);
+
+        &[data-expanded="true"] > .mx_GenericEventListSummary_toggle {
+            margin-inline-start: var(--cpd-space-16x);
+        }
+    }
+
+    &[data-layout="irc"][data-expanded="false"] > .mx_EventTile_line {
+        /* Cap the IRC gutter so narrow summaries retain space next to the toggle. */
+        padding-inline: 0;
+        padding-inline-start: min(
+            calc(var(--name-width) + var(--icon-width) + var(--MessageTimestamp-width) + 2 * var(--right-padding)),
+            25%
+        );
+    }
+
+    &[data-layout="irc"][data-expanded="true"] > .mx_GenericEventListSummary_toggle {
+        margin-inline-start: calc(
+            var(--name-width) + var(--icon-width) + var(--MessageTimestamp-width) + 2 * var(--right-padding)
+        );
     }
 
     &[data-layout="bubble"] {
@@ -53,7 +88,8 @@ Please see LICENSE files in the repository root for full details.
             }
 
             &[aria-expanded="true"] {
-                margin-inline-start: auto; /* reduce clickable area */
+                align-self: flex-start;
+                margin-inline-start: calc(var(--avatarSize) + var(--gutterSize));
                 margin-inline-end: var(--EventTile_bubble-margin-inline-end); /* as the parent has zero margin */
             }
         }
@@ -63,9 +99,12 @@ Please see LICENSE files in the repository root for full details.
         }
 
         &[data-expanded="false"] {
-            align-items: center;
-            justify-content: space-between;
-            column-gap: 5px;
+            align-items: baseline;
+            column-gap: var(--cpd-space-2x);
+
+            .mx_GenericEventListSummary_toggle {
+                flex-shrink: 0;
+            }
         }
 
         /* ideally we'd use display=contents here for the layout to all work regardless of the *ELS but */

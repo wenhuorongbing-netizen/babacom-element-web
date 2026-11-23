@@ -5,6 +5,7 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only OR LicenseRef-Element-Com
 Please see LICENSE files in the repository root for full details.
 */
 
+import path from "node:path";
 import { expect, describe, it, beforeEach, vi } from "vitest";
 import { fs as memfs, vol } from "memfs";
 
@@ -72,7 +73,7 @@ describe("tryPaths", () => {
     });
 
     it("should find file relative to given root", async () => {
-        await expect(tryPaths("name", "dir", ["dirB"])).resolves.toEqual("dir/dirB/");
+        await expect(tryPaths("name", "dir", ["dirB"])).resolves.toEqual(path.join("dir", "dirB") + "/");
     });
 
     it("should handle unknown paths", async () => {

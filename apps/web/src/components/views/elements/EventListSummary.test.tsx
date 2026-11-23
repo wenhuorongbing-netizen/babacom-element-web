@@ -10,7 +10,8 @@ Please see LICENSE files in the repository root for full details.
 
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi, type MockInstance } from "vitest";
 import React, { type ComponentProps } from "react";
-import { render, type RenderResult } from "test-utils-rtl";
+import { render, within, type RenderResult } from "test-utils-rtl";
+import userEvent from "@testing-library/user-event";
 import { type MatrixEvent, RoomMember } from "matrix-js-sdk/src/matrix";
 import { KnownMembership, type Membership } from "matrix-js-sdk/src/types";
 import {
@@ -132,6 +133,37 @@ describe("EventListSummary", function () {
         );
     };
 
+    const renderEventGroups = (layout: Layout): RenderResult => {
+        const groups = ["First", "Second"].map((name) => {
+            const events = [0, 1, 2].map((index) =>
+                generateMembershipEvent(`${name}-${index}`, {
+                    userId: `@${name.toLowerCase()}_${index}:some.domain`,
+                    prevMembership: KnownMembership.Leave,
+                    membership: KnownMembership.Join,
+                }),
+            );
+            return (
+                <EventListSummary key={name} events={events} layout={layout} data-testid={`${name} group`}>
+                    {events.map((event, index) => (
+                        <li key={event.getId()}>{`${name} event ${index}`}</li>
+                    ))}
+                </EventListSummary>
+            );
+        });
+
+        return render(
+            <MatrixClientContext.Provider value={mockClient}>
+                <ol aria-label="Timeline">
+                    <li>Message before</li>
+                    {groups[0]}
+                    <li>Message between</li>
+                    {groups[1]}
+                    <li>Message after</li>
+                </ol>
+            </MatrixClientContext.Provider>,
+        );
+    };
+
     beforeEach(function () {
         vi.clearAllMocks();
         vi.spyOn(languageSettings, "getUserLanguage").mockReturnValue("en-GB");
@@ -140,6 +172,71 @@ describe("EventListSummary", function () {
     afterAll(() => {
         unmockClientPeg();
     });
+
+    it.each([Layout.Group, Layout.IRC, Layout.Bubble])(
+        "toggles only its own event group without reordering the %s timeline",
+        async (layout) => {
+            const user = userEvent.setup();
+            const { getByTestId, getByRole } = renderEventGroups(layout);
+            const first = within(getByTestId("First group"));
+            const second = within(getByTestId("Second group"));
+
+            await user.click(first.getByRole("button", { name: "Expand" }));
+            expect(first.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+                "First event 0",
+                "First event 1",
+                "First event 2",
+            ]);
+            expect(second.getByRole("button", { name: "Expand" })).toHaveAttribute("aria-expanded", "false");
+            expect(second.queryByText("Second event 0")).not.toBeInTheDocument();
+
+            await user.click(second.getByRole("button", { name: "Expand" }));
+            await user.click(first.getByRole("button", { name: "Collapse" }));
+            expect(first.queryByText("First event 0")).not.toBeInTheDocument();
+            expect(first.getByRole("button", { name: "Expand" })).toHaveAttribute("aria-expanded", "false");
+            expect(second.getByRole("button", { name: "Collapse" })).toHaveAttribute("aria-expanded", "true");
+            expect(second.getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+                "Second event 0",
+                "Second event 1",
+                "Second event 2",
+            ]);
+            expect(
+                Array.from(getByRole("list", { name: "Timeline" }).children).map(
+                    (item) => item.getAttribute("data-testid") ?? item.textContent,
+                ),
+            ).toEqual(["Message before", "First group", "Message between", "Second group", "Message after"]);
+        },
+    );
+
+    it.each([Layout.Group, Layout.IRC, Layout.Bubble])(
+        "keeps keyboard focus on the activated %s event-group toggle",
+        async (layout) => {
+            const user = userEvent.setup();
+            const { getByTestId } = renderEventGroups(layout);
+            const firstToggle = within(getByTestId("First group")).getByRole("button", { name: "Expand" });
+            const secondToggle = within(getByTestId("Second group")).getByRole("button", { name: "Expand" });
+
+            await user.tab();
+            expect(firstToggle).toHaveFocus();
+            await user.keyboard("{Enter}");
+            expect(firstToggle).toHaveAttribute("aria-expanded", "true");
+            expect(firstToggle).toHaveFocus();
+            expect(secondToggle).toHaveAttribute("aria-expanded", "false");
+            await user.keyboard(" ");
+            expect(firstToggle).toHaveAttribute("aria-expanded", "false");
+            expect(firstToggle).toHaveFocus();
+
+            await user.tab();
+            expect(secondToggle).toHaveFocus();
+            await user.keyboard(" ");
+            expect(secondToggle).toHaveAttribute("aria-expanded", "true");
+            expect(secondToggle).toHaveFocus();
+            expect(firstToggle).toHaveAttribute("aria-expanded", "false");
+            await user.keyboard("{Enter}");
+            expect(secondToggle).toHaveAttribute("aria-expanded", "false");
+            expect(secondToggle).toHaveFocus();
+        },
+    );
 
     it("renders expanded events if there are less than props.threshold", function () {
         const events = generateEvents([

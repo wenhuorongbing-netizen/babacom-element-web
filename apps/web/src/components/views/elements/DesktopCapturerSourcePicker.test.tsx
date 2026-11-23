@@ -10,7 +10,7 @@ Please see LICENSE files in the repository root for full details.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React from "react";
-import { render, screen } from "test-utils-rtl";
+import { act, cleanup, fireEvent, render, screen } from "test-utils-rtl";
 import userEvent from "@testing-library/user-event";
 
 import DesktopCapturerSourcePicker from "./DesktopCapturerSourcePicker";
@@ -40,17 +40,109 @@ describe("DesktopCapturerSourcePicker", () => {
     });
 
     afterEach(() => {
+        cleanup();
+        vi.useRealTimers();
         vi.restoreAllMocks();
     });
 
-    it("should render the component", () => {
+    it("stops refreshing when the picker closes before the first source list arrives", async () => {
+        vi.useFakeTimers();
+        const firstRequest = Promise.withResolvers<typeof SOURCES>();
+        const getSources = vi.mocked(PlatformPeg.get()!.getDesktopCapturerSources);
+        getSources.mockReturnValueOnce(firstRequest.promise);
+
+        const { unmount } = render(<DesktopCapturerSourcePicker onFinished={() => {}} />);
+        expect(getSources).toHaveBeenCalledTimes(1);
+
+        unmount();
+        await act(async () => {
+            firstRequest.resolve(SOURCES);
+            await firstRequest.promise;
+        });
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(1_000);
+        });
+
+        expect(getSources).toHaveBeenCalledTimes(1);
+    });
+
+    it("waits for a pending refresh to settle before scheduling another", async () => {
+        vi.useFakeTimers();
+        const firstRequest = Promise.withResolvers<typeof SOURCES>();
+        const refreshRequest = Promise.withResolvers<typeof SOURCES>();
+        const getSources = vi.mocked(PlatformPeg.get()!.getDesktopCapturerSources);
+        getSources.mockReturnValueOnce(firstRequest.promise).mockReturnValueOnce(refreshRequest.promise);
+
         render(<DesktopCapturerSourcePicker onFinished={() => {}} />);
+        await act(async () => {
+            firstRequest.resolve(SOURCES);
+            await firstRequest.promise;
+        });
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(500);
+        });
+        expect(getSources).toHaveBeenCalledTimes(2);
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(1_000);
+        });
+        expect(getSources).toHaveBeenCalledTimes(2);
+
+        await act(async () => {
+            refreshRequest.reject(new Error("Source enumeration failed"));
+            await vi.advanceTimersByTimeAsync(500);
+        });
+        expect(getSources).toHaveBeenCalledTimes(3);
+    });
+
+    it("disables sharing when the selected source disappears on refresh", async () => {
+        vi.useFakeTimers();
+        const getSources = vi.mocked(PlatformPeg.get()!.getDesktopCapturerSources);
+        getSources.mockResolvedValueOnce(SOURCES).mockResolvedValueOnce([SOURCES[1]]);
+
+        render(<DesktopCapturerSourcePicker onFinished={() => {}} />);
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(0);
+        });
+        fireEvent.click(screen.getByRole("button", { name: "Screen 1" }));
+        expect(screen.getByRole("button", { name: "Share" })).toBeEnabled();
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(500);
+        });
+
+        expect(screen.queryByRole("button", { name: "Screen 1" })).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: "Share" })).toBeDisabled();
+    });
+
+    it("should render the component", async () => {
+        render(<DesktopCapturerSourcePicker onFinished={() => {}} />);
+        await screen.findByRole("button", { name: "Screen 1" });
         expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: "Share" })).toBeInTheDocument();
     });
 
-    it("should disable share button until a source is selected", () => {
+    it("names the call and source at confirmation and leaves system audio off", async () => {
+        const onFinished = vi.fn();
+        render(
+            <DesktopCapturerSourcePicker
+                elementCallRoomName="Team voice"
+                canShareSystemAudio
+                onFinished={onFinished}
+            />,
+        );
+        const shareButton = screen.getByRole("button", { name: "Share screen" });
+        expect(shareButton).toBeDisabled();
+        expect(screen.getByText("Sharing to Team voice")).toBeInTheDocument();
+        expect(screen.getByRole("checkbox")).not.toBeChecked();
+        await userEvent.click(await screen.findByRole("button", { name: "Screen 1" }));
+        expect(screen.getByText("Selected source: Screen 1")).toBeInTheDocument();
+        await userEvent.click(shareButton);
+        expect(onFinished).toHaveBeenCalledExactlyOnceWith(SOURCES[0], false);
+    });
+    it("should disable share button until a source is selected", async () => {
         render(<DesktopCapturerSourcePicker onFinished={() => {}} />);
+        await screen.findByRole("button", { name: "Screen 1" });
         expect(screen.getByRole("button", { name: "Share" })).toBeDisabled();
     });
 
@@ -90,6 +182,44 @@ describe("DesktopCapturerSourcePicker", () => {
 
         await userEvent.click(screen1Button);
         await userEvent.click(screen.getByRole("button", { name: "Share" }));
-        expect(onFinished).toHaveBeenCalledWith(SOURCES[0]);
+        expect(onFinished).toHaveBeenCalledWith(SOURCES[0], false);
+    });
+
+    it("defaults system audio to off for every new picker", async () => {
+        const onFinished = vi.fn();
+        const first = render(<DesktopCapturerSourcePicker onFinished={onFinished} canShareSystemAudio={true} />);
+        const checkbox = screen.getByRole("checkbox", { name: "Share system audio from this computer" });
+        expect(checkbox).not.toBeChecked();
+        await userEvent.click(checkbox);
+        first.unmount();
+
+        render(<DesktopCapturerSourcePicker onFinished={onFinished} canShareSystemAudio={true} />);
+        await screen.findByRole("button", { name: "Screen 1" });
+        expect(screen.getByRole("checkbox", { name: "Share system audio from this computer" })).not.toBeChecked();
+    });
+
+    it("shares system audio only after the checkbox is selected", async () => {
+        const onFinished = vi.fn();
+        render(<DesktopCapturerSourcePicker onFinished={onFinished} canShareSystemAudio={true} />);
+        await userEvent.click(await screen.findByRole("button", { name: "Screen 1" }));
+        await userEvent.click(screen.getByRole("checkbox", { name: "Share system audio from this computer" }));
+        await userEvent.click(screen.getByRole("button", { name: "Share" }));
+
+        expect(onFinished).toHaveBeenCalledExactlyOnceWith(SOURCES[0], true);
+    });
+
+    it("does not pass system audio consent when canceled after checking the box", async () => {
+        const onFinished = vi.fn();
+        render(<DesktopCapturerSourcePicker onFinished={onFinished} canShareSystemAudio={true} />);
+        await userEvent.click(screen.getByRole("checkbox", { name: "Share system audio from this computer" }));
+        await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+        expect(onFinished).toHaveBeenCalledExactlyOnceWith();
+    });
+
+    it.each([false, undefined])("hides the audio option when availability is %s", async (canShareSystemAudio) => {
+        render(<DesktopCapturerSourcePicker onFinished={() => {}} canShareSystemAudio={canShareSystemAudio} />);
+        await screen.findByRole("button", { name: "Screen 1" });
+        expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     });
 });

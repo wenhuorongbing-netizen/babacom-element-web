@@ -448,7 +448,7 @@ class LoginComponent extends React.PureComponent<IProps, IState> {
                     );
                 }}
             >
-                {_t("action|continue")}
+                {_t("auth|continue_signing_in")}
             </Button>
         );
     };
@@ -536,6 +536,10 @@ class LoginComponent extends React.PureComponent<IProps, IState> {
                     {errorTextSection}
                     {serverDeadSection}
                     <ServerPicker
+                        title={_t("auth|account_server")}
+                        dialogTitle={_t("auth|server_picker_title")}
+                        changeLabel={_t("action|change")}
+                        changeAriaLabel={_t("auth|change_account_server")}
                         serverConfig={this.props.serverConfig}
                         onServerConfigChange={this.props.onServerConfigChange}
                         disabled={this.isBusy()}

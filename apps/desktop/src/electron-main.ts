@@ -21,9 +21,11 @@ import {
     session,
     protocol,
     desktopCapturer,
+    globalShortcut,
 } from "electron";
 import * as Sentry from "@sentry/electron/main";
 import path from "node:path";
+import fs from "node:fs";
 import windowStateKeeper from "electron-window-state";
 import { URL, fileURLToPath } from "node:url";
 
@@ -39,7 +41,7 @@ import webContentsHandler from "./webcontents-handler.js";
 import * as updater from "./updater.js";
 import ProtocolHandler from "./protocol.js";
 import { _t, AppLocalization } from "./language-helper.js";
-import { setDisplayMediaCallback } from "./displayMediaCallback.js";
+import { getEmbeddedCallRoomId, setDisplayMediaCallback } from "./displayMediaCallback.js";
 import { setupMacosTitleBar } from "./macos-titlebar.js";
 import { setupMediaAuth } from "./media-auth.js";
 import { handleWindowClose, revealMainWindow } from "./window-close.js";
@@ -47,13 +49,20 @@ import { type RendererRecovery, setupRendererRecovery } from "./renderer-recover
 import { getBuildConfig } from "./build-config.js";
 import { getAsarPath } from "./asar.js";
 import { getIconPath } from "./icon.js";
-import { getArgs } from "./args.js";
+import { getArgs, getIsolatedCandidateProfile } from "./args.js";
 import { type ConfigOptions, loadConfig } from "./config.js";
+import { createGlobalShortcuts } from "./global-shortcuts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const buildConfig = getBuildConfig();
-const protocolHandler = new ProtocolHandler(buildConfig.protocol);
+const isolatedProfile = getIsolatedCandidateProfile();
+if (isolatedProfile) {
+    fs.mkdirSync(isolatedProfile, { recursive: true });
+    app.setPath("userData", isolatedProfile);
+    app.setPath("sessionData", isolatedProfile);
+}
+const protocolHandler = new ProtocolHandler(buildConfig.protocol, isolatedProfile !== undefined);
 const args = getArgs(protocolHandler);
 
 app.setPath("userData", args.userDataPath);
@@ -315,7 +324,17 @@ app.on("ready", async () => {
         }
     });
 
+    const globalShortcuts = createGlobalShortcuts({
+        globalShortcut,
+        getMainWindow: () => global.mainWindow,
+        platform: process.platform,
+        warn: (message): void => console.warn(message),
+    });
+    app.once("will-quit", () => globalShortcuts.dispose());
+
     global.mainWindow.webContents.on("before-input-event", (event: Event, input: Input): void => {
+        if (globalShortcuts.handleBeforeInput(event, input)) return;
+
         const exitShortcutPressed =
             input.type === "keyDown" && exitShortcuts.some((shortcutFn) => shortcutFn(input, process.platform));
 
@@ -349,6 +368,7 @@ app.on("ready", async () => {
     });
 
     global.mainWindow.on("closed", () => {
+        setDisplayMediaCallback(null);
         global.mainWindow = null;
     });
     global.mainWindow.on("close", (e) =>
@@ -367,6 +387,8 @@ app.on("ready", async () => {
     }
 
     webContentsHandler(global.mainWindow.webContents);
+    global.mainWindow.webContents.on("render-process-gone", () => setDisplayMediaCallback(null));
+    global.mainWindow.webContents.on("destroyed", () => setDisplayMediaCallback(null));
 
     // Auto-recover from an upstream renderer/GPU-process crash (white screen, element-web#32222). This
     // is a MITIGATION of an upstream Electron/Chromium defect, not a root-cause fix — without it a dead
@@ -374,8 +396,9 @@ app.on("ready", async () => {
     rendererRecovery = setupRendererRecovery(global.mainWindow);
 
     session.defaultSession.setDisplayMediaRequestHandler(
-        (_, callback) => {
+        (request, callback) => {
             if (process.env.XDG_SESSION_TYPE === "wayland") {
+                setDisplayMediaCallback(null);
                 // On Wayland, calling getSources() opens the xdg-desktop-portal picker.
                 // The user can only select a single source there, so Electron will return an array with exactly one entry.
                 desktopCapturer
@@ -391,9 +414,26 @@ app.on("ready", async () => {
                         callback({ video: { id: "", name: "" } }); // The promise does not return if no dummy is passed here as source
                     });
             } else {
-                global.mainWindow?.webContents.send("openDesktopCapturerSourcePicker");
+                const win = global.mainWindow;
+                const liveWebContents = win && !win.isDestroyed() ? win.webContents : undefined;
+                const mainFrame =
+                    liveWebContents && !liveWebContents.isDestroyed() ? liveWebContents.mainFrame : undefined;
+                const requestingFrame = request.frame;
+                const elementCallRoomId =
+                    mainFrame &&
+                    requestingFrame &&
+                    !requestingFrame.isDestroyed() &&
+                    !requestingFrame.detached &&
+                    requestingFrame.top?.frameTreeNodeId === mainFrame.frameTreeNodeId
+                        ? getEmbeddedCallRoomId(requestingFrame.url)
+                        : undefined;
+                const pickerRequest = setDisplayMediaCallback(callback, request.audioRequested, elementCallRoomId);
+                if (liveWebContents && !liveWebContents.isDestroyed()) {
+                    liveWebContents.send("openDesktopCapturerSourcePicker", pickerRequest);
+                } else {
+                    setDisplayMediaCallback(null);
+                }
             }
-            setDisplayMediaCallback(callback);
         },
         { useSystemPicker: true },
     ); // Use Mac OS 15+ native picker

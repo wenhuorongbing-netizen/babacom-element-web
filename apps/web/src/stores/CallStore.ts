@@ -16,7 +16,7 @@ import { AsyncStoreWithClient } from "./AsyncStoreWithClient";
 import WidgetStore from "./WidgetStore";
 import SettingsStore from "../settings/SettingsStore";
 import { SettingLevel } from "../settings/SettingLevel";
-import { Call, CallEvent, ConnectionState } from "../models/Call";
+import { Call, CallEvent, ConnectionState, ElementCall } from "../models/Call";
 import SdkConfig from "../SdkConfig.ts";
 
 export enum CallStoreEvent {
@@ -189,6 +189,11 @@ export class CallStore extends AsyncStoreWithClient<EmptyObject> {
     public getActiveCall(roomId: string): Call | null {
         const call = this.getCall(roomId);
         return call !== null && this.connectedCalls.has(call) ? call : null;
+    }
+
+    /** The local Element Call targeted by the persistent voice controls. */
+    public getActiveElementCall(): ElementCall | undefined {
+        return [...this.connectedCalls].reverse().find((call): call is ElementCall => call instanceof ElementCall);
     }
 
     /**

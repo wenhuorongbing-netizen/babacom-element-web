@@ -49,6 +49,10 @@ export interface Args {
      */
     userDataPath: string;
     /**
+     * Whether this is an explicitly isolated candidate without OS deeplink or SSO routing.
+     */
+    isolatedCandidate?: boolean;
+    /**
      * Path to local override config.json file.
      */
     localConfigPath?: string;
@@ -116,10 +120,46 @@ function getUserDataPath(argv: ParsedArgs, protocolHandler: ProtocolHandler): st
     return newUserDataPath;
 }
 
+function getIsolatedCandidateProfileFromArgs(argv: ParsedArgs): string | undefined {
+    const isolated = argv["babacom-isolated-candidate"];
+    if (isolated === undefined || isolated === false || isolated === "false") return undefined;
+    if (isolated !== true && isolated !== "true") {
+        throw new Error("--babacom-isolated-candidate must be a boolean flag");
+    }
+
+    const profile = argv["profile-dir"];
+    if (typeof profile !== "string" || !profile.trim() || profile !== profile.trim() || !path.isAbsolute(profile)) {
+        throw new Error("--babacom-isolated-candidate requires an explicit absolute --profile-dir");
+    }
+
+    const profilePath = path.resolve(profile);
+    // Windows strips trailing dots/spaces from ordinary path components.
+    if (process.platform === "win32" && profilePath.split(/[\\/]/).some((part) => /[. ]$/.test(part))) {
+        throw new Error("--profile-dir must not contain Windows path aliases");
+    }
+    const normalise = (value: string): string => {
+        const resolved = path.resolve(value);
+        return process.platform === "win32" ? path.toNamespacedPath(resolved).toLowerCase() : resolved;
+    };
+    const legacyPath = path.join(app.getPath("appData"), app.getName().replace("Element", "Riot"));
+    if ([defaultUserDataDir, legacyPath].some((value) => normalise(value) === normalise(profilePath))) {
+        throw new Error("--profile-dir must differ from the default and legacy profiles in isolated candidate mode");
+    }
+    return profilePath;
+}
+
+/**
+ * Validates the opt-in candidate profile before any protocol handler or profile storage is initialised.
+ * Returns undefined for ordinary startup; it does not read or create profile files.
+ */
+export function getIsolatedCandidateProfile(): string | undefined {
+    return getIsolatedCandidateProfileFromArgs(minimist(process.argv, { alias: { help: "h" } }));
+}
+
 /**
  * Parses command line arguments and handles the `--help` flag.
  * If `--help` is present, it prints usage information and exits the application.
- * Must be called before Electron's userData is set.
+ * Uses the default userData path captured before startup overrides.
  */
 export function getArgs(protocolHandler: ProtocolHandler): Args {
     const argv = minimist(process.argv, {
@@ -129,6 +169,9 @@ export function getArgs(protocolHandler: ProtocolHandler): Args {
     if (argv["help"]) {
         console.log("Options:");
         console.log("  --profile-dir {path}: Path to where to store the profile.");
+        console.log(
+            "  --babacom-isolated-candidate: Require a separate absolute --profile-dir; disable OS deeplinks/SSO.",
+        );
         console.log(
             `  --profile {name}:     Name of alternate profile to use, allows for running multiple accounts.\n` +
                 `                         Ignored if --profile-dir is specified.\n` +
@@ -152,8 +195,10 @@ export function getArgs(protocolHandler: ProtocolHandler): Args {
         storageMode = argv["storage-mode"];
     }
 
+    const isolatedProfile = getIsolatedCandidateProfileFromArgs(argv);
     return {
-        userDataPath: getUserDataPath(argv, protocolHandler),
+        userDataPath: isolatedProfile ?? getUserDataPath(argv, protocolHandler),
+        ...(isolatedProfile ? { isolatedCandidate: true } : {}),
         localConfigPath: argv["config"] ?? process.env.ELEMENT_DESKTOP_CONFIG_JSON,
         storageMode,
         devtools: argv["devtools"] || false,

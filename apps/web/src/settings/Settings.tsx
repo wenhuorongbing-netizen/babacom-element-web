@@ -382,8 +382,10 @@ export interface Settings {
 
 export type SettingKey = keyof Settings;
 export type FeatureSettingKey = Assignable<Settings, IFeature>;
-export type BooleanSettingKey = Assignable<Settings, IBaseSetting<boolean>> | FeatureSettingKey;
-export type NullableBooleanSettingKey = Assignable<Settings, IBaseSetting<boolean | null>> | FeatureSettingKey;
+export type BooleanSettingKey = Assignable<Settings, Pick<IBaseSetting<boolean>, "default">> | FeatureSettingKey;
+export type NullableBooleanSettingKey =
+    | Assignable<Settings, Pick<IBaseSetting<boolean | null>, "default">>
+    | FeatureSettingKey;
 export type StringSettingKey = Assignable<Settings, IBaseSetting<string>>;
 
 export const SETTINGS: Settings = {

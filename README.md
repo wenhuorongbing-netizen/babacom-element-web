@@ -12,6 +12,18 @@
 Element (formerly known as Vector and Riot) is a Matrix web & desktop client built using the [Matrix
 JS SDK](https://github.com/matrix-org/matrix-js-sdk).
 
+## BabaCom local client
+
+This checkout contains the Matrix client candidate for BabaCom, based on Element 1.12.30.
+The BabaCom repository beside this checkout still contains the legacy prototype and migration contracts.
+Use [the local desktop instructions](apps/desktop/README.md#babacom-local-windows-candidate) for the Windows candidate.
+Use [Element Web development](apps/web/README.md) when changing the renderer.
+
+The current development slice includes login/server selection, room navigation, event summaries and Windows
+screen sharing with explicit system-audio consent. The candidate uses the bundled Element Call widget.
+Compilation and packaging do not establish two-account chat, voice, sharing or release acceptance.
+Full-client tests are deferred at Jack’s request; the dedicated Matrix test service must be restored before them.
+
 # Supported Environments
 
 Element has several tiers of support for different environments:

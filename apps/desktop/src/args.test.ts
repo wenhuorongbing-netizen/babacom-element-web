@@ -5,11 +5,12 @@ SPDX-License-Identifier: AGPL-3.0-only OR GPL-3.0-only OR LicenseRef-Element-Com
 Please see LICENSE files in the repository root for full details.
 */
 
-import { expect, describe, it, beforeEach, vi } from "vitest";
+import path from "node:path";
+import { expect, describe, it, beforeEach, afterEach, vi } from "vitest";
 import { fs as memfs, vol } from "memfs";
 import { app } from "electron";
 
-import { type Args, getArgs, getArgsForProtocolRegistration } from "./args.js";
+import { type Args, getArgs, getArgsForProtocolRegistration, getIsolatedCandidateProfile } from "./args.js";
 import type ProtocolHandler from "./protocol.js";
 
 vi.mock("node:fs", () => ({ default: memfs }));
@@ -268,7 +269,7 @@ describe("getArgs", () => {
 
             const args = run();
             expect(args).toEqual({
-                userDataPath: "/Users/name/Library/Application Support/Riot",
+                userDataPath: path.join("/Users/name/Library/Application Support", "Riot"),
                 devtools: false,
                 update: true,
                 hidden: false,
@@ -320,4 +321,104 @@ describe("getArgs", () => {
             });
         });
     });
+});
+
+describe("isolated candidate arguments", () => {
+    const candidatePath = path.resolve("/path/to/babacom-candidate");
+    const defaultPath = "/Users/name/Library/Application Support/Element";
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllEnvs();
+    });
+
+    function run(args: string[]): { args: Args; handler: ProtocolHandler } {
+        vi.spyOn(process, "argv", "get").mockReturnValue(["/path/to/app", ...args]);
+        const handler = {
+            getProfileFromDeeplink: vi.fn().mockReturnValue("/path/to/live-profile"),
+        } as unknown as ProtocolHandler;
+        return { args: getArgs(handler), handler };
+    }
+
+    it("uses only the explicit candidate profile without consulting SSO, migration, or the environment", () => {
+        vi.stubEnv("ELEMENT_PROFILE_DIR", "/path/to/environment-profile");
+        const exists = vi.spyOn(memfs, "existsSync");
+        const result = run([
+            "--babacom-isolated-candidate",
+            "--profile-dir",
+            candidatePath,
+            "element://vector/webapp/?element-desktop-ssoid=synthetic-session",
+        ]);
+
+        expect(result.args).toMatchObject({ userDataPath: candidatePath, isolatedCandidate: true });
+        expect(result.handler.getProfileFromDeeplink).not.toHaveBeenCalled();
+        expect(exists).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        ["missing", []],
+        ["relative", ["--profile-dir", "relative-profile"]],
+        ["default", ["--profile-dir", defaultPath]],
+        ["normalised default", ["--profile-dir", path.join(defaultPath, "..", "Element")]],
+        ["legacy default", ["--profile-dir", path.join(path.dirname(defaultPath), "Riot")]],
+        ["empty", ["--profile-dir="]],
+        ["whitespace", ["--profile-dir", "   "]],
+        ["missing value", ["--profile-dir"]],
+        ["repeated", ["--profile-dir", candidatePath, "--profile-dir", candidatePath]],
+    ])("rejects a %s candidate profile before consulting SSO", (_name, profileArgs) => {
+        vi.spyOn(process, "argv", "get").mockReturnValue([
+            "/path/to/app",
+            "--babacom-isolated-candidate",
+            ...profileArgs,
+        ]);
+        const handler = { getProfileFromDeeplink: vi.fn() } as unknown as ProtocolHandler;
+        expect(() => getArgs(handler)).toThrow(/profile-dir/);
+        expect(handler.getProfileFromDeeplink).not.toHaveBeenCalled();
+    });
+
+    it("rejects arbitrary truthy flag values", () => {
+        expect(() => run(["--babacom-isolated-candidate=garbage", "--profile-dir", candidatePath])).toThrow(
+            /babacom-isolated-candidate/,
+        );
+    });
+
+    it("exposes the validated profile before a protocol handler exists", () => {
+        vi.spyOn(process, "argv", "get").mockReturnValue([
+            "/path/to/app",
+            "--babacom-isolated-candidate=true",
+            "--profile-dir",
+            candidatePath,
+        ]);
+        const exists = vi.spyOn(memfs, "existsSync");
+        expect(getIsolatedCandidateProfile()).toBe(candidatePath);
+        expect(exists).not.toHaveBeenCalled();
+    });
+
+    it("leaves ordinary startup preflight inactive", () => {
+        vi.spyOn(process, "argv", "get").mockReturnValue(["/path/to/app"]);
+        expect(getIsolatedCandidateProfile()).toBeUndefined();
+    });
+
+    it
+        .skipIf(process.platform !== "win32")
+        .each([
+            path.resolve(defaultPath).toUpperCase(),
+            path.toNamespacedPath(path.resolve(defaultPath)),
+            path.resolve(defaultPath) + ".",
+            path.resolve(defaultPath) + " ",
+            path.join(defaultPath + " ", "child"),
+            "D:relative-profile",
+        ])("rejects a Windows default-profile alias or drive-relative path: %s", (profile) => {
+        expect(() => run(["--babacom-isolated-candidate", "--profile-dir", profile])).toThrow(/profile-dir/);
+    });
+
+    it.each(["--no-babacom-isolated-candidate", "--babacom-isolated-candidate=false"])(
+        "keeps normal SSO routing for %s",
+        (flag) => {
+            const result = run([flag]);
+            expect(result.args.userDataPath).toBe("/path/to/live-profile");
+            expect(result.args).not.toHaveProperty("isolatedCandidate");
+            expect(result.handler.getProfileFromDeeplink).toHaveBeenCalledOnce();
+        },
+    );
 });

@@ -262,6 +262,53 @@ describe("<ForgotPassword>", () => {
                                 screen.getByText("Too many attempts in a short time. Retry after 13:37."),
                             ).toBeInTheDocument();
                         });
+
+                        it("should allow retrying after a rate limit error", async () => {
+                            expect(
+                                screen.getByText("Too many attempts in a short time. Retry after 13:37."),
+                            ).toBeInTheDocument();
+                            expect(screen.getByLabelText("New Password")).toBeEnabled();
+                            expect(screen.getByLabelText("Confirm new password")).toBeEnabled();
+                            expect(screen.getByText("Reset password")).toBeEnabled();
+                            expect(client.setPassword).toHaveBeenCalledTimes(1);
+
+                            vi.mocked(client.setPassword).mockResolvedValueOnce({});
+                            await click(screen.getByText("Reset password"));
+
+                            await expect(
+                                screen.findByText("Your password has been reset."),
+                            ).resolves.toBeInTheDocument();
+                            expect(client.setPassword).toHaveBeenCalledTimes(2);
+                        });
+                    });
+
+                    describe("and submitting it running into a connection error", () => {
+                        beforeEach(async () => {
+                            vi.mocked(client.setPassword).mockRejectedValue({
+                                name: "ConnectionError",
+                                message: "Connection failed",
+                            });
+                            await click(screen.getByText("Reset password"));
+                        });
+
+                        it("should allow retrying after a connection error", async () => {
+                            const connectionError =
+                                "Cannot reach homeserver: " +
+                                "Ensure you have a stable internet connection, or get in touch with the server admin";
+                            expect(screen.getByText(connectionError)).toBeInTheDocument();
+                            expect(screen.getByLabelText("New Password")).toBeEnabled();
+                            expect(screen.getByLabelText("Confirm new password")).toBeEnabled();
+                            expect(screen.getByText("Reset password")).toBeEnabled();
+                            expect(client.setPassword).toHaveBeenCalledTimes(1);
+
+                            vi.mocked(client.setPassword).mockResolvedValueOnce({});
+                            await click(screen.getByText("Reset password"));
+
+                            await expect(
+                                screen.findByText("Your password has been reset."),
+                            ).resolves.toBeInTheDocument();
+                            expect(client.setPassword).toHaveBeenCalledTimes(2);
+                        });
                     });
 
                     describe("and confirm the email link and submitting the new password", () => {

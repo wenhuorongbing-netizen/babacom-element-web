@@ -1,0 +1,50 @@
+/*
+ * Copyright 2026 Jack
+ *
+ * SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
+ * Please see LICENSE files in the repository root for full details.
+ */
+
+.bar {
+    flex-shrink: 0;
+    display: grid;
+    gap: var(--cpd-space-1x);
+    padding: var(--cpd-space-2x);
+    border-top: 1px solid var(--cpd-color-border-subtle-primary);
+    background: var(--cpd-color-bg-canvas-default);
+}
+
+.heading {
+    display: grid;
+    min-width: 0;
+    gap: var(--cpd-space-1x);
+}
+
+.room {
+    width: fit-content;
+    max-width: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--cpd-color-text-primary);
+    font: var(--cpd-font-body-md-semibold);
+    text-align: start;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    cursor: pointer;
+}
+
+.room:hover {
+    text-decoration: underline;
+}
+
+.controls {
+    display: flex;
+    align-items: center;
+    gap: var(--cpd-space-2x);
+}
+
+.status {
+    color: var(--cpd-color-text-secondary);
+}

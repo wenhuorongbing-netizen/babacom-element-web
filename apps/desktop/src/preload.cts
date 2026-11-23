@@ -39,7 +39,7 @@ const CHANNELS = [
 
 contextBridge.exposeInMainWorld("electron", {
     on(channel: string, listener: (event: IpcRendererEvent, ...args: any[]) => void): void {
-        if (!CHANNELS.includes(channel)) {
+        if (!CHANNELS.includes(channel) && channel !== "babacom-toggle-microphone") {
             console.error(`Unknown IPC channel ${channel} ignored`);
             return;
         }

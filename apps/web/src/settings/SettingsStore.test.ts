@@ -8,7 +8,7 @@ Please see LICENSE files in the repository root for full details.
 
 // @vitest-environment happy-dom
 
-import { vi, describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
+import { vi, describe, it, expect, expectTypeOf, beforeAll, beforeEach, afterEach } from "vitest";
 import { ClientEvent, type MatrixClient, type Room, SyncState } from "matrix-js-sdk/src/matrix";
 import { waitFor } from "test-utils-rtl";
 import { mkStubRoom, mockPlatformPeg, stubClient } from "test-utils";
@@ -17,7 +17,7 @@ import type BasePlatform from "../BasePlatform";
 import SdkConfig from "../SdkConfig";
 import { SettingLevel } from "./SettingLevel";
 import SettingsStore from "./SettingsStore";
-import { SETTINGS, type SettingKey } from "./Settings.tsx";
+import { SETTINGS, type SettingKey, type BooleanSettingKey, type NullableBooleanSettingKey } from "./Settings.tsx";
 import MatrixClientBackedController from "./controllers/MatrixClientBackedController.ts";
 import SettingController from "./controllers/SettingController.ts";
 
@@ -251,4 +251,17 @@ describe("SettingsStore", () => {
             });
         });
     });
+});
+
+it("classifies boolean setting keys by their default value type", () => {
+    type PlainBoolean = "use_system_theme" | "feature_video_rooms";
+    type NullableBoolean = "pseudonymousAnalyticsOptIn" | "fallbackICEServerAllowed";
+    type NonBoolean = "layout" | "systemFont" | "autocompleteDelay";
+
+    expectTypeOf<Extract<BooleanSettingKey, NonBoolean>>().toEqualTypeOf<never>();
+    expectTypeOf<Extract<NullableBooleanSettingKey, NonBoolean>>().toEqualTypeOf<never>();
+    expectTypeOf<Extract<BooleanSettingKey, PlainBoolean>>().toEqualTypeOf<PlainBoolean>();
+    expectTypeOf<Extract<NullableBooleanSettingKey, PlainBoolean>>().toEqualTypeOf<PlainBoolean>();
+    expectTypeOf<Extract<BooleanSettingKey, NullableBoolean>>().toEqualTypeOf<never>();
+    expectTypeOf<Extract<NullableBooleanSettingKey, NullableBoolean>>().toEqualTypeOf<NullableBoolean>();
 });

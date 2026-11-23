@@ -72,14 +72,159 @@ describe("<ServerPickerDialog />", () => {
 
     // checkbox and text input have the same aria-label
     const getOtherHomeserverCheckBox = () =>
-        screen.getAllByLabelText("Other homeserver").find((node) => node.getAttribute("type") === "radio")!;
+        screen.getAllByLabelText("Other account server").find((node) => node.getAttribute("type") === "radio")!;
     const getOtherHomeserverInput = () =>
-        screen.getAllByLabelText("Other homeserver").find((node) => node.getAttribute("type") === "text")!;
+        screen.getAllByLabelText("Other account server").find((node) => node.getAttribute("type") === "text")!;
+
+    it("should cancel explicitly without changing or discovering an account server", () => {
+        const onFinished = vi.fn();
+        getComponent({ onFinished });
+
+        fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+        expect(onFinished).toHaveBeenCalledExactlyOnceWith();
+        expect(fetchMock).not.toHaveFetched();
+    });
+
+    it("should dismiss with Escape without changing the account server", () => {
+        const onFinished = vi.fn();
+        getComponent({ onFinished });
+
+        fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape", code: "Escape" });
+
+        expect(onFinished).toHaveBeenCalledExactlyOnceWith();
+        expect(fetchMock).not.toHaveFetched();
+    });
+
+    it("should ignore a validation result after the account server address is edited", async () => {
+        const firstServer = "https://first.example.org";
+        const secondServer = "https://second.example.org";
+        const versions = { versions: SERVER_SUPPORTED_MATRIX_VERSIONS };
+        const firstResponse = Promise.withResolvers<typeof versions>();
+        fetchMock.get(`${firstServer}/_matrix/client/versions`, () => firstResponse.promise);
+        fetchMock.get(`${secondServer}/_matrix/client/versions`, versions);
+        const onFinished = vi.fn();
+        getComponent({ onFinished });
+
+        const input = getOtherHomeserverInput();
+        const submit = screen.getByRole("button", { name: "Continue" });
+        fireEvent.focus(input);
+        fireEvent.change(input, { target: { value: firstServer } });
+        fireEvent.click(submit);
+        await flushPromises();
+        expect(fetchMock).toHaveFetched(`${firstServer}/_matrix/client/versions`);
+
+        fireEvent.change(input, { target: { value: secondServer } });
+        firstResponse.resolve(versions);
+        await flushPromises();
+        expect(onFinished).not.toHaveBeenCalled();
+
+        fireEvent.click(submit);
+        await flushPromises();
+        expect(onFinished).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ hsUrl: secondServer }));
+    });
+
+    it("should ignore a validation result after the account server dialog is canceled", async () => {
+        const server = "https://canceled.example.org";
+        const versions = { versions: SERVER_SUPPORTED_MATRIX_VERSIONS };
+        const response = Promise.withResolvers<typeof versions>();
+        fetchMock.get(`${server}/_matrix/client/versions`, () => response.promise);
+        const onFinished = vi.fn();
+        getComponent({ onFinished });
+
+        const input = getOtherHomeserverInput();
+        fireEvent.focus(input);
+        fireEvent.change(input, { target: { value: server } });
+        fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+        await flushPromises();
+        expect(fetchMock).toHaveFetched(`${server}/_matrix/client/versions`);
+
+        fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+        response.resolve(versions);
+        await flushPromises();
+
+        expect(onFinished).toHaveBeenCalledExactlyOnceWith();
+    });
+
+    it("should keep an invalid server address open for correction", async () => {
+        const onFinished = vi.fn();
+        const { container } = getComponent({ onFinished });
+
+        fireEvent.focus(getOtherHomeserverInput());
+        fireEvent.change(getOtherHomeserverInput(), { target: { value: "https://" } });
+        fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+        await flushPromises();
+
+        expect(container.querySelector(".mx_ServerPickerDialog_otherHomeserver.mx_Field_invalid")).toBeTruthy();
+        expect(screen.getByText("Enter a complete account server address, such as https://example.org.")).toBeVisible();
+        expect(getOtherHomeserverInput()).toHaveDisplayValue("https://");
+        expect(fetchMock).not.toHaveFetched();
+        expect(onFinished).not.toHaveBeenCalled();
+        expect(getOtherHomeserverInput()).toHaveFocus();
+    });
+
+    it("should validate a corrected address after a format error", async () => {
+        const homeserver = "https://corrected.example.org";
+        fetchMock.get(`${homeserver}/_matrix/client/versions`, {
+            unstable_features: {},
+            versions: SERVER_SUPPORTED_MATRIX_VERSIONS,
+        });
+        const onFinished = vi.fn();
+        getComponent({ onFinished });
+
+        fireEvent.focus(getOtherHomeserverInput());
+        fireEvent.change(getOtherHomeserverInput(), { target: { value: "https://" } });
+        fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+        await flushPromises();
+        expect(onFinished).not.toHaveBeenCalled();
+
+        fireEvent.change(getOtherHomeserverInput(), { target: { value: homeserver } });
+        fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+        await flushPromises();
+
+        expect(onFinished).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ hsUrl: homeserver }));
+        expect(fetchMock).toHaveFetched(`${homeserver}/_matrix/client/versions`);
+    });
+
+    it("should not report a reachable address with a failed discovery response as a format error", async () => {
+        const homeserver = "https://unavailable.example.org";
+        const onFinished = vi.fn();
+        getComponent({ onFinished });
+
+        fireEvent.focus(getOtherHomeserverInput());
+        fireEvent.change(getOtherHomeserverInput(), { target: { value: homeserver } });
+        fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+        await flushPromises();
+
+        expect(fetchMock).toHaveFetched(`${homeserver}/_matrix/client/versions`);
+        expect(screen.queryByText("Enter a complete account server address, such as https://example.org.")).toBeNull();
+        expect(getOtherHomeserverInput()).toHaveDisplayValue(homeserver);
+        expect(onFinished).not.toHaveBeenCalled();
+    });
+
+    it("should retain and focus the current custom account server", () => {
+        getComponent({
+            serverConfig: {
+                ...defaultServerConfig,
+                hsName: "custom.org",
+                hsUrl: "https://custom.org",
+                isDefault: false,
+            },
+        });
+
+        expect(getOtherHomeserverCheckBox()).toBeChecked();
+        expect(screen.getByTestId("defaultHomeserver")).not.toBeChecked();
+        expect(getOtherHomeserverInput()).toHaveDisplayValue("custom.org");
+        expect(getOtherHomeserverInput()).toHaveFocus();
+        expect(fetchMock).not.toHaveFetched();
+    });
 
     describe("when default server config is selected", () => {
-        it("should select other homeserver field on open", () => {
+        it("should retain the default account server on open", () => {
             getComponent();
-            expect(getOtherHomeserverCheckBox()).toBeChecked();
+            expect(screen.getByTestId("defaultHomeserver")).toBeChecked();
+            expect(getOtherHomeserverCheckBox()).not.toBeChecked();
+            expect(getOtherHomeserverInput()).not.toHaveFocus();
             // empty field
             expect(getOtherHomeserverInput()).toHaveDisplayValue("");
         });
@@ -88,6 +233,7 @@ describe("<ServerPickerDialog />", () => {
             const onFinished = vi.fn();
             const { container } = getComponent({ onFinished });
 
+            fireEvent.focus(getOtherHomeserverInput());
             fireEvent.click(screen.getByText("Continue"));
 
             await flushPromises();
@@ -150,6 +296,7 @@ describe("<ServerPickerDialog />", () => {
             const onFinished = vi.fn();
             getComponent({ onFinished });
 
+            fireEvent.focus(getOtherHomeserverInput());
             fireEvent.change(getOtherHomeserverInput(), { target: { value: homeserver } });
             expect(getOtherHomeserverInput()).toHaveDisplayValue(homeserver);
 
@@ -177,6 +324,7 @@ describe("<ServerPickerDialog />", () => {
                 fetchMock.get(wellKnownUrl, {});
                 getComponent();
 
+                fireEvent.focus(getOtherHomeserverInput());
                 fireEvent.change(getOtherHomeserverInput(), { target: { value: homeserver } });
                 expect(getOtherHomeserverInput()).toHaveDisplayValue(homeserver);
                 // trigger validation
@@ -204,6 +352,7 @@ describe("<ServerPickerDialog />", () => {
                 const onFinished = vi.fn();
                 getComponent({ onFinished });
 
+                fireEvent.focus(getOtherHomeserverInput());
                 fireEvent.change(getOtherHomeserverInput(), { target: { value: homeserver } });
                 fireEvent.click(screen.getByText("Continue"));
 
@@ -240,6 +389,7 @@ describe("<ServerPickerDialog />", () => {
                 const onFinished = vi.fn();
                 getComponent({ onFinished });
 
+                fireEvent.focus(getOtherHomeserverInput());
                 fireEvent.change(getOtherHomeserverInput(), { target: { value: homeserver } });
                 fireEvent.click(screen.getByText("Continue"));
 
