@@ -22,6 +22,11 @@ export interface LiveKitJwtServiceOptions {
     homeserverServerName: string;
     /** Client-Server API base URL of the homeserver as reachable from inside the docker network. */
     homeserverInternalUrl: string;
+    /**
+     * BabaCom: run this image with its screen-share arbiter instead of the upstream service. The arbiter checks room
+     * membership through the homeserver, so the service is also registered as an application service.
+     */
+    babacomArbiter?: { image: string; asToken: string; hsToken: string };
 }
 
 /**
@@ -32,16 +37,22 @@ export interface LiveKitJwtServiceOptions {
  */
 export class LiveKitJwtServiceContainer extends GenericContainer {
     public constructor(opts: LiveKitJwtServiceOptions) {
-        super(DOCKER_IMAGE);
+        super(opts.babacomArbiter?.image ?? DOCKER_IMAGE);
 
         this.withEnvironment({
             LIVEKIT_URL: opts.livekitUrl,
             LIVEKIT_KEY: LIVEKIT_API_KEY,
             LIVEKIT_SECRET: LIVEKIT_API_SECRET,
-            LIVEKIT_FULL_ACCESS_HOMESERVERS: "*",
+            LIVEKIT_FULL_ACCESS_HOMESERVERS: opts.babacomArbiter ? opts.homeserverServerName : "*",
             LIVEKIT_INSECURE_SKIP_VERIFY_TLS: "YES_I_KNOW_WHAT_I_AM_DOING",
             // Used for delayed-leave delegation calls; skips .well-known discovery for our server name.
             LIVEKIT_CS_API_URL_OVERRIDES: `${opts.homeserverServerName}=${opts.homeserverInternalUrl}`,
+            ...(opts.babacomArbiter && {
+                BABACOM_SHARE_ARBITER: "1",
+                LIVEKIT_AS_TOKEN: opts.babacomArbiter.asToken,
+                LIVEKIT_HS_TOKEN: opts.babacomArbiter.hsToken,
+                LIVEKIT_HS_SERVER_NAME: opts.homeserverServerName,
+            }),
         })
             // Makes the browser-facing SFU hostname resolve to the docker host from inside this container too.
             .withExtraHosts([{ host: LIVEKIT_HOST, ipAddress: "host-gateway" }])

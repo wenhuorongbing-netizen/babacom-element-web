@@ -1,5 +1,5 @@
 diff --git a/locales/en/app.json b/locales/en/app.json
-index f3d568bb8054ebc30d8f1d9e439c741943309875..ee1dde471c5b85dde2264ef37b75edca10efa450 100644
+index f3d568b..00f1000 100644
 --- a/locales/en/app.json
 +++ b/locales/en/app.json
 @@ -56,6 +56,16 @@
@@ -19,15 +19,21 @@ index f3d568bb8054ebc30d8f1d9e439c741943309875..ee1dde471c5b85dde2264ef37b75edca
    "developer_mode": {
      "always_show_iphone_earpiece": "Show iPhone earpiece option on all platforms",
      "crypto_version": "Crypto version: {{version}}",
-@@ -117,6 +127,7 @@
+@@ -116,7 +126,13 @@
+     "peer_connection_timeout_description": "Connection to the media server timed out. Try switching to a different network or disabling your VPN. If the problem persists, see our <0>troubleshooting guide</0> or contact your server administrator.",
      "room_creation_restricted": "Failed to create call",
      "room_creation_restricted_description": "Call creation might be restricted to authorized users only. Try again later, or contact your server admin if the problem persists.",
++    "screen_share_busy": "{{name}} is sharing their screen. You can share once they stop.",
++    "screen_share_busy_unnamed": "Someone else is sharing their screen. You can share once they stop.",
      "screen_share_failed": "Could not start screen sharing",
++    "screen_share_forbidden": "You are not allowed to share your screen in this call.",
++    "screen_share_state_unknown": "The previous screen share has not been confirmed as stopped yet. Try again in a moment.",
 +    "screen_share_system_audio_unsafe": "System audio could not be shared safely. Turn off system audio and try again.",
++    "screen_share_unavailable": "Screen sharing is unavailable right now. Your voice connection is not affected.",
      "sticky_events_required": "Homeserver does not support Matrix 2.0 calls",
      "sticky_events_required_description": "This deployment is configured to use Matrix 2.0 call mode, but the homeserver does not advertise support for sticky events (MSC4354). Ask your server admin to upgrade, or switch the deployment to a compatible mode.",
      "unexpected_ec_error": "An unexpected error occurred (<0>Error Code:</0> <1>{{ errorCode }}</1>). Please contact your server admin."
-@@ -272,8 +283,13 @@
+@@ -272,8 +288,13 @@
      "expand": "Expand",
      "mute_for_me": "Mute for me",
      "muted_for_me": "Muted for me",
@@ -82,7 +88,7 @@ index b8d052d..b44c2b3 100644
        />
      </Tooltip>
 diff --git a/src/components/CallFooter.stories.tsx b/src/components/CallFooter.stories.tsx
-index 3c3f46074cb4a9a0995cd0184421cd5884aacdbd..4983669c8d266b10906d5635d2b9e031262413f2 100644
+index 3c3f460..4983669 100644
 --- a/src/components/CallFooter.stories.tsx
 +++ b/src/components/CallFooter.stories.tsx
 @@ -7,6 +7,7 @@ Please see LICENSE in the repository root for full details.
@@ -1074,7 +1080,7 @@ index 3c3f46074cb4a9a0995cd0184421cd5884aacdbd..4983669c8d266b10906d5635d2b9e031
 +    },
  };
 diff --git a/src/components/CallFooter.tsx b/src/components/CallFooter.tsx
-index 4f79f236cc9480d97daaaed03c3020c77bd5c9b1..945cdb7d52ba327da1a69540bfe5b60ab35b81d1 100644
+index 4f79f23..945cdb7 100644
 --- a/src/components/CallFooter.tsx
 +++ b/src/components/CallFooter.tsx
 @@ -7,34 +7,38 @@ Please see LICENSE in the repository root for full details.
@@ -1702,7 +1708,7 @@ index 4f79f236cc9480d97daaaed03c3020c77bd5c9b1..945cdb7d52ba327da1a69540bfe5b60a
 +    return `Tiles generation: ${generation}`;
  };
 diff --git a/src/components/CallFooterViewModel.tsx b/src/components/CallFooterViewModel.tsx
-index a2ca6c88ef359fc39a08798ecd20ff4358565f17..d0fc62c63a769cf3b9157b47f1bce2317f3c239e 100644
+index a2ca6c8..d0fc62c 100644
 --- a/src/components/CallFooterViewModel.tsx
 +++ b/src/components/CallFooterViewModel.tsx
 @@ -12,8 +12,8 @@ import { type CallViewModel } from "../state/CallViewModel/CallViewModel";
@@ -2409,32 +2415,81 @@ index 95d68c0..40fae20 100644
      track.setAudioContext(useContext ? audioContext : undefined);
      track.setWebAudioPlugins(
 diff --git a/src/room/InCallView.tsx b/src/room/InCallView.tsx
-index 5f706ca..88489a6 100644
+index 5f706ca..49b4990 100644
 --- a/src/room/InCallView.tsx
 +++ b/src/room/InCallView.tsx
-@@ -78,6 +78,7 @@ import {
+@@ -23,6 +23,7 @@ import classNames from "classnames";
+ import { map } from "rxjs";
+ import { useObservable } from "observable-hooks";
+ import { logger as rootLogger } from "matrix-js-sdk/lib/logger";
++import { type TFunction } from "i18next";
+ import { useTranslation } from "react-i18next";
+ 
+ import { Header, LeftNav, RightNav, RoomHeaderInfo } from "../Header";
+@@ -78,6 +79,8 @@ import {
  } from "../AppBar.tsx";
  import { useBehavior } from "../useBehavior.ts";
  import { constant } from "../state/Behavior.ts";
 +import { BabaComSystemAudioError } from "../state/CallViewModel/localMember/LocalMember.ts";
++import { BabaComShareLeaseError } from "../livekit/babacomShareLease.ts";
  import { Toast } from "../Toast.tsx";
  import overlayStyles from "../Overlay.module.css";
  import { useTrackProcessorObservable$ } from "../livekit/TrackProcessorContext.tsx";
-@@ -441,7 +442,11 @@ export const InCallView: FC<InCallViewProps> = ({
+@@ -235,6 +238,35 @@ export interface InCallViewProps {
+   onShareClick: (() => void) | null;
+ }
+ 
++/**
++ * Explains why screen sharing did not start. The authorization service decides
++ * who may share, so a refused share names the participant who holds it.
++ */
++export function screenShareErrorMessage(
++  error: Error | null,
++  remoteSharerName: string | null,
++  t: TFunction,
++): string {
++  if (error instanceof BabaComSystemAudioError) {
++    return t("error.screen_share_system_audio_unsafe");
++  }
++  if (!(error instanceof BabaComShareLeaseError)) {
++    return t("error.screen_share_failed");
++  }
++  switch (error.failure) {
++    case "busy":
++      return remoteSharerName
++        ? t("error.screen_share_busy", { name: remoteSharerName })
++        : t("error.screen_share_busy_unnamed");
++    case "unknown":
++      return t("error.screen_share_state_unknown");
++    case "forbidden":
++      return t("error.screen_share_forbidden");
++    default:
++      return t("error.screen_share_unavailable");
++  }
++}
++
+ export const InCallView: FC<InCallViewProps> = ({
+   client,
+   vm,
+@@ -301,6 +333,7 @@ export const InCallView: FC<InCallViewProps> = ({
+   const participantCount = useBehavior(vm.participantCount$);
+   const reconnecting = useBehavior(vm.reconnecting$);
+   const screenShareError = useBehavior(vm.screenShareError$);
++  const remoteScreenSharerName = useBehavior(vm.remoteScreenSharerName$);
+   const layout = useBehavior(vm.layout$);
+   const edgeToEdge = useBehavior(vm.edgeToEdge$);
+   const overflowing = useBehavior(vm.overflowing$);
+@@ -441,7 +474,7 @@ export const InCallView: FC<InCallViewProps> = ({
        autoDismiss={5000}
        modal={false}
      >
 -      {t("error.screen_share_failed")}
-+      {t(
-+        screenShareError instanceof BabaComSystemAudioError
-+          ? "error.screen_share_system_audio_unsafe"
-+          : "error.screen_share_failed",
-+      )}
++      {screenShareErrorMessage(screenShareError, remoteScreenSharerName, t)}
      </Toast>
    );
  
 diff --git a/src/state/CallViewModel/CallViewModel.ts b/src/state/CallViewModel/CallViewModel.ts
-index 957a56fad70f214bb049c4dcb779e68d96f32ee0..ddad0293ed34c1fbb831e21c7dbf977a4e316500 100644
+index 957a56f..002924f 100644
 --- a/src/state/CallViewModel/CallViewModel.ts
 +++ b/src/state/CallViewModel/CallViewModel.ts
 @@ -7,66 +7,66 @@ Please see LICENSE in the repository root for full details.
@@ -2848,7 +2903,7 @@ index 957a56fad70f214bb049c4dcb779e68d96f32ee0..ddad0293ed34c1fbb831e21c7dbf977a
  };
  
  /**
-@@ -300,187 +305,189 @@ export type LivekitRoomItem = {
+@@ -300,187 +305,194 @@ export type LivekitRoomItem = {
   * (Mocking this interface should allow building a full view in all states.)
   */
  export interface CallViewModel {
@@ -3076,6 +3131,11 @@ index 957a56fad70f214bb049c4dcb779e68d96f32ee0..ddad0293ed34c1fbb831e21c7dbf977a
 +     */
 +    screenShareError$: Behavior<Error | null>;
 +    dismissScreenShareError: () => void;
++    /**
++     * The display name of a remote participant who is sharing their screen,
++     * if any. Used to say who holds the screen share.
++     */
++    remoteScreenSharerName$: Behavior<string | null>;
 +
 +    // UI interactions
 +    /**
@@ -3219,7 +3279,7 @@ index 957a56fad70f214bb049c4dcb779e68d96f32ee0..ddad0293ed34c1fbb831e21c7dbf977a
  }
  
  /**
-@@ -492,1453 +499,1585 @@ export interface CallViewModel {
+@@ -492,1453 +504,1595 @@ export interface CallViewModel {
  // state and LiveKit state. We use the common terminology of room "members", RTC
  // "memberships", and LiveKit "participants".
  export function createCallViewModel$(
@@ -4061,6 +4121,15 @@ index 957a56fad70f214bb049c4dcb779e68d96f32ee0..ddad0293ed34c1fbb831e21c7dbf977a
 +        ),
 +    );
 +
++    const remoteScreenSharerName$ = scope.behavior<string | null>(
++        screenShares$.pipe(
++            switchMap((screenShares) => {
++                const remote = screenShares.find((share) => !share.local);
++                return remote ? remote.displayName$ : of(null);
++            }),
++        ),
++    );
++
 +    const joinSoundEffect$ = userMedia$.pipe(
 +        pairwise(),
 +        filter(
@@ -4207,7 +4276,23 @@ index 957a56fad70f214bb049c4dcb779e68d96f32ee0..ddad0293ed34c1fbb831e21c7dbf977a
 +                      );
 +            }),
 +            distinctUntilChanged(shallowArrayEquals),
-+        ),
+         ),
+-      ),
+-      startWith(null),
+-    ),
+-  );
+-
+-  /**
+-   * All screen share media that we want to display.
+-   */
+-  const screenShares$ = scope.behavior<ScreenShareViewModel[]>(
+-    userMedia$.pipe(
+-      switchMap((userMedia) =>
+-        userMedia.length === 0
+-          ? of([])
+-          : combineLatest(
+-              userMedia.map((m) => m.screenShares$),
+-              (...screenShares) => screenShares.flat(1),
 +    );
 +
 +    /**
@@ -4267,23 +4352,7 @@ index 957a56fad70f214bb049c4dcb779e68d96f32ee0..ddad0293ed34c1fbb831e21c7dbf977a
 +                    }),
 +                );
 +            }),
-         ),
--      ),
--      startWith(null),
--    ),
--  );
--
--  /**
--   * All screen share media that we want to display.
--   */
--  const screenShares$ = scope.behavior<ScreenShareViewModel[]>(
--    userMedia$.pipe(
--      switchMap((userMedia) =>
--        userMedia.length === 0
--          ? of([])
--          : combineLatest(
--              userMedia.map((m) => m.screenShares$),
--              (...screenShares) => screenShares.flat(1),
++        ),
 +    );
 +
 +    const spotlight$ = scope.behavior<MediaViewModel[]>(
@@ -6171,6 +6240,7 @@ index 957a56fad70f214bb049c4dcb779e68d96f32ee0..ddad0293ed34c1fbb831e21c7dbf977a
 +        screenShareTransition$: localMembership.screenShareTransition$,
 +        screenShareError$: localMembership.screenShareError$,
 +        dismissScreenShareError: localMembership.dismissScreenShareError,
++        remoteScreenSharerName$,
 +    };
  }
  
@@ -6210,7 +6280,7 @@ index 957a56fad70f214bb049c4dcb779e68d96f32ee0..ddad0293ed34c1fbb831e21c7dbf977a
 +    }
  }
 diff --git a/src/state/CallViewModel/localMember/LocalMember.test.ts b/src/state/CallViewModel/localMember/LocalMember.test.ts
-index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924301f9c69 100644
+index 6df999b..cb4e493 100644
 --- a/src/state/CallViewModel/localMember/LocalMember.test.ts
 +++ b/src/state/CallViewModel/localMember/LocalMember.test.ts
 @@ -23,11 +23,17 @@ import {
@@ -6240,7 +6310,15 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
    TransportState,
    createLocalMembership$,
    enterRTCSession,
-@@ -66,6 +73,13 @@ import {
+@@ -50,6 +57,7 @@ import {
+   TrackState,
+   watchScreenShareToggle,
+ } from "./LocalMember";
++import { BabaComShareLeaseError } from "../../../livekit/babacomShareLease";
+ import {
+   FailToGetOpenIdToken,
+   MatrixRTCTransportMissingError,
+@@ -66,6 +74,13 @@ import {
    type LocalTransportWithSFUConfig,
  } from "./LocalTransport";
  import * as openIDSFU from "../../../livekit/openIDSFU";
@@ -6254,7 +6332,7 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
  
  initializeWidget();
  
-@@ -150,7 +164,9 @@ describe("enterRTCSession", () => {
+@@ -150,7 +165,9 @@ describe("enterRTCSession", () => {
  
    beforeEach(() =>
      mockConfig({
@@ -6265,7 +6343,7 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
      }),
    );
  
-@@ -171,7 +187,9 @@ describe("enterRTCSession", () => {
+@@ -171,7 +188,9 @@ describe("enterRTCSession", () => {
  
    it("passes keyRotationParticipantLimit from config to joinRTCSession", () => {
      mockConfig({
@@ -6276,7 +6354,7 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
        matrix_rtc_session: {
          network_error_retry_ms: 0,
          key_rotation_participant_limit: 50,
-@@ -245,7 +263,9 @@ describe("LocalMembership", () => {
+@@ -245,7 +264,9 @@ describe("LocalMembership", () => {
  
    beforeEach(() => {
      mockConfig({
@@ -6287,7 +6365,7 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
        matrix_rtc_session: {
          network_error_retry_ms: 1000,
          delayed_leave: timings,
-@@ -448,7 +468,10 @@ describe("LocalMembership", () => {
+@@ -448,7 +469,10 @@ describe("LocalMembership", () => {
        const delayId$ = new BehaviorSubject<string | null>(null);
  
        if (delegationUrl !== null)
@@ -6299,7 +6377,7 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
  
        const localMembership = createLocalMembership$({
          scope,
-@@ -1023,6 +1046,10 @@ describe("LocalMembership", () => {
+@@ -1023,6 +1047,10 @@ describe("LocalMembership", () => {
        const localMembership = createLocalMembership$({
          scope,
          ...defaultCreateLocalMemberValues,
@@ -6310,10 +6388,48 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
          connectionManager: {
            connectionManagerData$: constant(new Epoch(connectionManagerData)),
          },
-@@ -1034,6 +1061,553 @@ describe("LocalMembership", () => {
+@@ -1034,6 +1062,598 @@ describe("LocalMembership", () => {
        return { scope, localMembership };
      };
  
++    // The share lease is granted and LiveKit already reports the screen
++    // sources, unless a test says otherwise.
++    const screenSharePermission = {
++      canPublishSources: [
++        Track.sourceToProto(Track.Source.Camera),
++        Track.sourceToProto(Track.Source.Microphone),
++        Track.sourceToProto(Track.Source.ScreenShare),
++        Track.sourceToProto(Track.Source.ScreenShareAudio),
++      ],
++    } as LocalParticipant["permissions"];
++    let leaseRequests: { url: string; body: Record<string, unknown> }[] = [];
++    let leaseResponse: () => Response = () =>
++      new Response(JSON.stringify({ state: "held" }), { status: 200 });
++    beforeEach(() => {
++      leaseRequests = [];
++      leaseResponse = () =>
++        new Response(JSON.stringify({ state: "held" }), {
++          status: 200,
++        });
++      vi.stubGlobal(
++        "fetch",
++        vi.fn(async (url: string, init: RequestInit) => {
++          await Promise.resolve();
++          if (!url.includes("/babacom/share/")) {
++            return new Response("not found", { status: 404 });
++          }
++          leaseRequests.push({
++            url,
++            body: JSON.parse(init.body as string) as Record<string, unknown>,
++          });
++          return leaseResponse();
++        }),
++      );
++    });
++    afterEach(() => {
++      vi.unstubAllGlobals();
++    });
++
 +    const LOOPBACK = "loopbackWithoutChrome";
 +    const SAFE_MSG =
 +      "System audio is unavailable. Try again or share without sound.";
@@ -6439,6 +6555,7 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
 +          transport: aTransport,
 +          livekitRoom: mockLivekitRoom({
 +            localParticipant: mockLocalParticipant({
++              permissions: screenSharePermission,
 +              isScreenShareEnabled: false,
 +              createScreenTracks,
 +              publishTrack,
@@ -6535,6 +6652,7 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
 +          transport: aTransport,
 +          livekitRoom: mockLivekitRoom({
 +            localParticipant: mockLocalParticipant({
++              permissions: screenSharePermission,
 +              isScreenShareEnabled: false,
 +              createScreenTracks,
 +              publishTrack,
@@ -6633,6 +6751,7 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
 +                transport: aTransport,
 +                livekitRoom: mockLivekitRoom({
 +                  localParticipant: mockLocalParticipant({
++                    permissions: screenSharePermission,
 +                    createScreenTracks,
 +                  }),
 +                }),
@@ -6660,6 +6779,7 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
 +        transport: aTransport,
 +        livekitRoom: mockLivekitRoom({
 +          localParticipant: mockLocalParticipant({
++            permissions: screenSharePermission,
 +            isScreenShareEnabled: false,
 +            createScreenTracks,
 +          }),
@@ -6717,6 +6837,7 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
 +          transport: aTransport,
 +          livekitRoom: mockLivekitRoom({
 +            localParticipant: mockLocalParticipant({
++              permissions: screenSharePermission,
 +              isScreenShareEnabled: false,
 +              createScreenTracks,
 +              publishTrack,
@@ -6787,6 +6908,7 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
 +        transport: aTransport,
 +        livekitRoom: mockLivekitRoom({
 +          localParticipant: mockLocalParticipant({
++            permissions: screenSharePermission,
 +            isScreenShareEnabled: false,
 +            createScreenTracks: vi.fn().mockResolvedValue([video, audio]),
 +            publishTrack,
@@ -6835,6 +6957,7 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
 +        transport: aTransport,
 +        livekitRoom: mockLivekitRoom({
 +          localParticipant: mockLocalParticipant({
++            permissions: screenSharePermission,
 +            isScreenShareEnabled: true,
 +            getTrackPublication,
 +            unpublishTrack,
@@ -6864,8 +6987,201 @@ index 6df999b1e2a75baa6b6dbf594b780c7c047f0964..8b5e916a14956e041ea6af072a0ec924
      it("surfaces a failure and clears it on dismiss", async () => {
        const error = new Error("NotReadableError");
        const setScreenShareEnabled = vi.fn().mockRejectedValue(error);
+@@ -1042,6 +1662,7 @@ describe("LocalMembership", () => {
+         transport: aTransport,
+         livekitRoom: mockLivekitRoom({
+           localParticipant: mockLocalParticipant({
++            permissions: screenSharePermission,
+             isScreenShareEnabled: false,
+             setScreenShareEnabled,
+           }),
+@@ -1083,5 +1704,184 @@ describe("LocalMembership", () => {
+ 
+       scope.end();
+     });
++
++    describe("BabaCom share lease", () => {
++      const shareConnection = (
++        participant: Partial<LocalParticipant>,
++      ): Connection =>
++        ({
++          state$: constant(ConnectionState.LivekitConnected),
++          transport: aTransport,
++          livekitRoom: mockLivekitRoom({
++            localParticipant: mockLocalParticipant({
++              permissions: screenSharePermission,
++              isScreenShareEnabled: false,
++              ...participant,
++            }),
++          }),
++        }) as unknown as Connection;
++      const actions = (): string[] =>
++        leaseRequests.map(({ url }) => url.split("/").at(-1)!);
++
++      it("claims after the user picks a source and before publishing", async () => {
++        vi.stubEnv("VITE_BABACOM_VOICE", "1");
++        const order: string[] = [];
++        const createScreenTracks = vi.fn(async () => {
++          await Promise.resolve();
++          order.push("pick");
++          return [makeTrack(Track.Source.ScreenShare)];
++        });
++        const publishTrack = vi.fn(async () => {
++          await Promise.resolve();
++          order.push("publish");
++        });
++        const recordLease = vi.mocked(fetch).getMockImplementation()!;
++        vi.mocked(fetch).mockImplementation(async (url, init) => {
++          if ((url as string).endsWith("/babacom/share/claim")) {
++            order.push("claim");
++          }
++          return recordLease(url, init);
++        });
++        const { scope, localMembership } = createMembershipWithConnection(
++          shareConnection({
++            createScreenTracks,
++            publishTrack: publishTrack as never,
++          }),
++        );
++        try {
++          await flushPromises();
++          localMembership.toggleScreenSharing!();
++          await flushPromises();
++          expect(order).toEqual(["pick", "claim", "publish"]);
++          expect(leaseRequests[0]).toEqual({
++            url: "a/babacom/share/claim",
++            body: expect.objectContaining({
++              member_id: "@alice:example.org:DEVICE",
++              device_id: "DEVICE",
++              slot_id: "m.call#ROOM",
++              attempt_id: expect.any(String),
++            }),
++          });
++          expect(localMembership.screenShareError$.value).toBeNull();
++        } finally {
++          scope.end();
++          vi.unstubAllEnvs();
++        }
++      });
++
++      it("publishes nothing and reports who holds the share when refused", async () => {
++        vi.stubEnv("VITE_BABACOM_VOICE", "1");
++        leaseResponse = () =>
++          new Response(JSON.stringify({ errcode: "IO.BABACOM.SHARE_BUSY" }), {
++            status: 409,
++          });
++        const video = makeTrack(Track.Source.ScreenShare);
++        const publishTrack = vi.fn();
++        const unpublishTrack = vi.fn().mockResolvedValue(undefined);
++        const { scope, localMembership } = createMembershipWithConnection(
++          shareConnection({
++            createScreenTracks: vi.fn().mockResolvedValue([video]),
++            publishTrack,
++            unpublishTrack,
++          }),
++        );
++        try {
++          await flushPromises();
++          localMembership.toggleScreenSharing!();
++          await flushPromises();
++          expect(publishTrack).not.toHaveBeenCalled();
++          expect(video.stop).toHaveBeenCalled();
++          expect(localMembership.screenShareError$.value).toEqual(
++            new BabaComShareLeaseError("busy"),
++          );
++          // The refused attempt is closed so a delayed grant cannot apply.
++          expect(actions()).toEqual(["claim", "release"]);
++          expect(leaseRequests[1].body.attempt_id).toBe(
++            leaseRequests[0].body.attempt_id,
++          );
++        } finally {
++          scope.end();
++          vi.unstubAllEnvs();
++        }
++      });
++
++      it("releases the lease when the user stops sharing", async () => {
++        vi.stubEnv("VITE_BABACOM_VOICE", "1");
++        const video = makeTrack(Track.Source.ScreenShare);
++        const audio = makeTrack(Track.Source.ScreenShareAudio, {
++          getSettings: validRoute,
++        });
++        const published = new Map<Track.Source, LocalTrack>();
++        // sharingScreen$ is stubbed in these tests; a published system audio
++        // track is what makes the toggle stop the share.
++        const localParticipant = mockLocalParticipant({
++          permissions: screenSharePermission,
++          createScreenTracks: vi.fn().mockResolvedValue([video, audio]),
++          getTrackPublication: ((source: Track.Source) =>
++            published.has(source)
++              ? { track: published.get(source) }
++              : undefined) as never,
++          publishTrack: vi.fn(async (track: LocalTrack) => {
++            await Promise.resolve();
++            published.set(track.source, track);
++          }) as never,
++          unpublishTrack: vi.fn(async (track: LocalTrack) => {
++            await Promise.resolve();
++            published.delete(track.source);
++          }) as never,
++        });
++        const { scope, localMembership } = createMembershipWithConnection({
++          state$: constant(ConnectionState.LivekitConnected),
++          transport: aTransport,
++          livekitRoom: mockLivekitRoom({ localParticipant }),
++        } as unknown as Connection);
++        try {
++          await flushPromises();
++          localMembership.toggleScreenSharing!();
++          await flushPromises();
++          expect(published.size).toBe(2);
++          localMembership.toggleScreenSharing!();
++          await flushPromises();
++          expect(published.size).toBe(0);
++          expect(actions()).toEqual(["claim", "release"]);
++          expect(leaseRequests[1].body.attempt_id).toBe(
++            leaseRequests[0].body.attempt_id,
++          );
++        } finally {
++          scope.end();
++          vi.unstubAllEnvs();
++        }
++      });
++
++      it("does not publish when LiveKit never reports the grant", async () => {
++        vi.useFakeTimers();
++        vi.stubEnv("VITE_BABACOM_VOICE", "1");
++        const publishTrack = vi.fn();
++        const { scope, localMembership } = createMembershipWithConnection(
++          shareConnection({
++            permissions: { canPublishSources: [] } as never,
++            createScreenTracks: vi
++              .fn()
++              .mockResolvedValue([makeTrack(Track.Source.ScreenShare)]),
++            publishTrack,
++            unpublishTrack: vi.fn().mockResolvedValue(undefined),
++          }),
++        );
++        try {
++          await vi.advanceTimersByTimeAsync(0);
++          localMembership.toggleScreenSharing!();
++          await vi.advanceTimersByTimeAsync(5000);
++          expect(publishTrack).not.toHaveBeenCalled();
++          expect(localMembership.screenShareError$.value).toEqual(
++            new BabaComShareLeaseError("unavailable"),
++          );
++          expect(actions()).toEqual(["claim", "release"]);
++        } finally {
++          scope.end();
++          vi.unstubAllEnvs();
++          vi.useRealTimers();
++        }
++      });
++    });
+   });
+ });
 diff --git a/src/state/CallViewModel/localMember/LocalMember.ts b/src/state/CallViewModel/localMember/LocalMember.ts
-index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89cea0344c1 100644
+index 7303946..4273fb5 100644
 --- a/src/state/CallViewModel/localMember/LocalMember.ts
 +++ b/src/state/CallViewModel/localMember/LocalMember.ts
 @@ -9,6 +9,8 @@ import {
@@ -6877,7 +7193,18 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
    type ScreenShareCaptureOptions,
    type TrackPublishOptions,
    RoomEvent,
-@@ -164,6 +166,12 @@ interface Props {
+@@ -80,6 +82,10 @@ import { type LocalTransport } from "./LocalTransport.ts";
+ import { areLivekitTransportsEqual } from "../remoteMembers/MatrixLivekitMembers.ts";
+ import { or$ } from "../../../utils/observable.ts";
+ import { getSFUConfigWithOpenID } from "../../../livekit/openIDSFU.ts";
++import {
++  BabaComShareLease,
++  BabaComShareLeaseError,
++} from "../../../livekit/babacomShareLease.ts";
+ 
+ export enum TransportState {
+   /** Not even a transport is available to the LocalMembership */
+@@ -164,6 +170,12 @@ interface Props {
    logger: Logger;
  }
  
@@ -6890,7 +7217,7 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
  /**
   * This class is responsible for managing the own membership in a room.
   * We want
-@@ -223,6 +231,7 @@ export const createLocalMembership$ = ({
+@@ -223,6 +235,7 @@ export const createLocalMembership$ = ({
    requestDisconnect: () => void;
    localMemberState$: Behavior<LocalMemberState>;
    sharingScreen$: Behavior<boolean>;
@@ -6898,7 +7225,7 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
    /**
     * Callback to toggle screen sharing. If null, screen sharing is not possible.
     */
-@@ -316,7 +325,10 @@ export const createLocalMembership$ = ({
+@@ -316,7 +329,10 @@ export const createLocalMembership$ = ({
          from(homeserverSupportsDelegation),
          from(transportSupportsDelegation),
        ).pipe(
@@ -6910,24 +7237,56 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
          startWith(null),
        );
      }),
-@@ -392,6 +404,8 @@ export const createLocalMembership$ = ({
+@@ -392,6 +408,39 @@ export const createLocalMembership$ = ({
    // This should be used in a combineLatest with publisher$ to connect.
    // to make it possible to call startTracks before the preferredTransport$ has resolved.
    const joinAndPublishRequested$ = new BehaviorSubject(false);
 +  let screenShareOperation: AbortController | undefined;
-+  scope.onEnd(() => screenShareOperation?.abort());
++  // The screen-share lease for the authorization service we publish through.
++  let shareLease: BabaComShareLease | undefined;
++  const getShareLease = (): BabaComShareLease | null => {
++    const serviceUrl = localConnection$.value?.transport.livekit_service_url;
++    if (!serviceUrl) return null;
++    if (shareLease?.serviceUrl !== serviceUrl) {
++      shareLease = new BabaComShareLease(
++        {
++          serviceUrl,
++          roomId,
++          // The same slot the join token was issued for.
++          slotId: "m.call#ROOM",
++          memberId: ownMembershipIdentity.memberId,
++          deviceId: ownMembershipIdentity.deviceId,
++        },
++        async () => client.getOpenIdToken(),
++      );
++    }
++    return shareLease;
++  };
++  const releaseHeldShareLease = (): void => {
++    const lease = shareLease;
++    const attempt = lease?.heldAttempt;
++    if (!lease || !attempt) return;
++    lease
++      .release(attempt)
++      .catch((e) => logger.warn("Could not release the screen share", e));
++  };
++  scope.onEnd(() => {
++    screenShareOperation?.abort();
++    releaseHeldShareLease();
++  });
  
    /**
     * The publisher is stored in here an abstracts creating and publishing tracks.
-@@ -409,6 +423,7 @@ export const createLocalMembership$ = ({
+@@ -409,6 +458,8 @@ export const createLocalMembership$ = ({
    };
  
    const requestDisconnect = (): void => {
 +    screenShareOperation?.abort();
++    releaseHeldShareLease();
      joinAndPublishRequested$.next(false);
    };
  
-@@ -741,7 +756,11 @@ export const createLocalMembership$ = ({
+@@ -741,7 +792,11 @@ export const createLocalMembership$ = ({
              ownMembershipIdentity,
              joinParams.transport.livekit_service_url,
              roomId,
@@ -6940,7 +7299,7 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
              logger,
            );
          } catch (e) {
-@@ -814,12 +833,43 @@ export const createLocalMembership$ = ({
+@@ -814,12 +869,43 @@ export const createLocalMembership$ = ({
    );
  
    const screenShareError$ = new BehaviorSubject<Error | null>(null);
@@ -6984,7 +7343,7 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
        const screenshareSettings: ScreenShareCaptureOptions = {
          // Screen share audio shouldn't have any filtering.
          // "echoCancellation" is purposely excluded, as setting it to
-@@ -837,6 +887,21 @@ export const createLocalMembership$ = ({
+@@ -837,6 +923,21 @@ export const createLocalMembership$ = ({
  
        let publishOptions: TrackPublishOptions | undefined;
  
@@ -7006,7 +7365,7 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
        if (advancedScreenShare.getValue()) {
          // User has advanced screen share settings enabled
          const { width, height } = parseResolution(
-@@ -859,7 +924,7 @@ export const createLocalMembership$ = ({
+@@ -859,7 +960,7 @@ export const createLocalMembership$ = ({
            },
            videoCodec: codec,
          };
@@ -7015,7 +7374,7 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
          // Fall back to config.json settings if available
          const screenConf = Config.get().media_quality?.screen_share;
          if (screenConf?.max_resolution) {
-@@ -871,32 +936,46 @@ export const createLocalMembership$ = ({
+@@ -871,32 +972,52 @@ export const createLocalMembership$ = ({
          }
        }
  
@@ -7043,6 +7402,11 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
 +        !operation.signal.aborted && participant$.value === participant;
 +      let toggle: Promise<unknown>;
 +      if (useBabaComSharing) {
++        const lease = getShareLease();
++        if (!lease) {
++          screenShareError$.next(new BabaComShareLeaseError("unavailable"));
++          return;
++        }
 +        screenShareOperation = operation;
 +        screenShareTransition$.next(
 +          targetScreenshareState ? "picking" : "stopping",
@@ -7055,6 +7419,7 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
 +            signal: operation.signal,
 +            isCurrent,
 +            onPublishing: () => screenShareTransition$.next("publishing"),
++            lease,
 +          },
 +          logger,
            publishOptions,
@@ -7080,7 +7445,7 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
      };
    }
  
-@@ -914,6 +993,7 @@ export const createLocalMembership$ = ({
+@@ -914,6 +1035,7 @@ export const createLocalMembership$ = ({
        ),
      ),
      sharingScreen$,
@@ -7088,7 +7453,7 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
      toggleScreenSharing,
      screenShareError$,
      dismissScreenShareError: () => screenShareError$.next(null),
-@@ -922,6 +1002,140 @@ export const createLocalMembership$ = ({
+@@ -922,6 +1044,221 @@ export const createLocalMembership$ = ({
    };
  };
  
@@ -7136,24 +7501,44 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
 +    signal,
 +    isCurrent,
 +    onPublishing,
++    lease,
 +  }: {
 +    signal: AbortSignal;
 +    isCurrent: () => boolean;
 +    onPublishing: () => void;
++    lease: BabaComShareLease;
 +  },
 +  logger: Logger,
 +  publishOptions?: TrackPublishOptions,
 +): Promise<void> {
++  const releaseLease = async (attempt: string): Promise<void> => {
++    try {
++      await lease.release(attempt);
++    } catch (e) {
++      // The SFU still enforces the revocation; the service reports UNKNOWN to
++      // successors until it can confirm the screen tracks are gone.
++      logger.warn("Could not release the screen share", e);
++    }
++  };
++
 +  if (!enable) {
 +    const tracks = [Track.Source.ScreenShare, Track.Source.ScreenShareAudio]
 +      .map((source) => participant.getTrackPublication(source)?.track)
 +      .filter((track) => track !== undefined);
-+    await releaseScreenShareTracks(participant, tracks);
++    try {
++      await releaseScreenShareTracks(participant, tracks);
++    } finally {
++      const attempt = lease.heldAttempt;
++      if (attempt) await releaseLease(attempt);
++    }
 +    return;
 +  }
 +
-+  // Capture stays in the widget click's call stack. Publishing is sequenced so
-+  // that a failed audio publication cannot race cleanup of the video.
++  // Capture stays in the widget click's call stack, because the browser only
++  // opens the picker on a recent user gesture. The lease is claimed after the
++  // user picks a source and before anything is published. Publishing is
++  // sequenced so that a failed audio publication cannot race cleanup of the
++  // video.
 +  const tracks = await participant.createScreenTracks(settings);
 +  const video = tracks.find(
 +    (track) => track.source === Track.Source.ScreenShare,
@@ -7163,6 +7548,8 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
 +  const stopCapture = (): void => {
 +    for (const track of tracks) track.mediaStreamTrack.stop();
 +  };
++  const attempt = lease.newAttempt();
++  let claimed = false;
 +  let published = false;
 +  try {
 +    if (!video) throw new Error("The screen capture returned no video");
@@ -7172,6 +7559,13 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
 +    assertBabaComLoopbackRoute(tracks);
 +    if (!captureIsLive()) return;
 +    signal.addEventListener("abort", stopCapture, { once: true });
++    // Claim even if the user cancels meanwhile, so the release that follows
++    // closes this attempt on the service.
++    claimed = true;
++    await lease.claim(attempt, participant.identity);
++    if (!captureIsLive()) return;
++    await waitForScreenSharePermission(participant, signal);
++    if (!captureIsLive()) return;
 +    onPublishing();
 +    for (const track of tracks) {
 +      if (!captureIsLive()) return;
@@ -7185,25 +7579,77 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
 +    const audio = tracks.find(
 +      (track) => track.source === Track.Source.ScreenShareAudio,
 +    );
-+    if (published && audio) {
++    if (published) {
++      // The user can end the share from the browser or system UI.
 +      video.mediaStreamTrack.addEventListener(
 +        "ended",
 +        () => {
 +          // LiveKit unpublishes the ended video. Windows loopback can outlive it.
-+          void releaseScreenShareTracks(participant, [audio]).catch((error) =>
-+            logger.warn(
-+              "Could not release system audio after the share ended",
-+              error,
-+            ),
-+          );
++          void releaseScreenShareTracks(participant, audio ? [audio] : [])
++            .catch((error) =>
++              logger.warn(
++                "Could not release system audio after the share ended",
++                error,
++              ),
++            )
++            .finally(() => {
++              if (lease.heldAttempt === attempt) void releaseLease(attempt);
++            });
 +        },
 +        { once: true },
 +      );
 +    }
 +  } finally {
 +    signal.removeEventListener("abort", stopCapture);
-+    if (!published) await releaseScreenShareTracks(participant, tracks);
++    if (!published) {
++      try {
++        await releaseScreenShareTracks(participant, tracks);
++      } finally {
++        if (claimed) await releaseLease(attempt);
++      }
++    }
 +  }
++}
++
++/** How long to wait for the SFU to tell this client about a granted share. */
++const SCREEN_SHARE_PERMISSION_TIMEOUT_MS = 5000;
++
++/**
++ * Waits until LiveKit reports that this participant may publish the screen.
++ * The service confirms the grant on the SFU before answering, but the client
++ * learns about it from a separate signalling update.
++ */
++async function waitForScreenSharePermission(
++  participant: LocalParticipant,
++  signal: AbortSignal,
++): Promise<void> {
++  const screen = Track.sourceToProto(Track.Source.ScreenShare);
++  const allowed = (): boolean =>
++    participant.permissions?.canPublishSources.includes(screen) ?? false;
++  if (allowed()) return;
++  await new Promise<void>((resolve, reject) => {
++    const cleanup = (): void => {
++      clearTimeout(timer);
++      signal.removeEventListener("abort", onAbort);
++      participant.off(ParticipantEvent.ParticipantPermissionsChanged, onChange);
++    };
++    const onChange = (): void => {
++      if (!allowed()) return;
++      cleanup();
++      resolve();
++    };
++    // The caller checks whether the capture is still live afterwards.
++    const onAbort = (): void => {
++      cleanup();
++      resolve();
++    };
++    const timer = setTimeout(() => {
++      cleanup();
++      reject(new BabaComShareLeaseError("unavailable"));
++    }, SCREEN_SHARE_PERMISSION_TIMEOUT_MS);
++    signal.addEventListener("abort", onAbort, { once: true });
++    participant.on(ParticipantEvent.ParticipantPermissionsChanged, onChange);
++  });
 +}
 +
 +async function releaseScreenShareTracks(
@@ -7230,7 +7676,7 @@ index 7303946a0095543f6471c4010b7803014e7c3323..d123d3763eb9b035363a5a0798cae89c
   * Logs the outcome of a screen share toggle and reports failures.
   *
 diff --git a/src/state/CallViewModel/remoteMembers/Connection.ts b/src/state/CallViewModel/remoteMembers/Connection.ts
-index 7889f90043585ffaf944a70c5d1771bea1dd7289..42c03e389d701401b987bcbf842fb52b5307e5e0 100644
+index 7889f90..42c03e3 100644
 --- a/src/state/CallViewModel/remoteMembers/Connection.ts
 +++ b/src/state/CallViewModel/remoteMembers/Connection.ts
 @@ -7,20 +7,20 @@ Please see LICENSE in the repository root for full details.
@@ -8114,7 +8560,7 @@ index 51342e8..04fbfab 100644
    };
  }
 diff --git a/src/state/media/RemoteScreenShareViewModel.ts b/src/state/media/RemoteScreenShareViewModel.ts
-index 8c46aeb33b4d2c19c6c3b34ad25c70f35871f126..a3dba98a06148696eed53385679388b8ac6fbaaf 100644
+index 8c46aeb..a3dba98 100644
 --- a/src/state/media/RemoteScreenShareViewModel.ts
 +++ b/src/state/media/RemoteScreenShareViewModel.ts
 @@ -7,7 +7,7 @@ Please see LICENSE in the repository root for full details.
@@ -8229,7 +8675,7 @@ index 908a6b1..482decb 100644
          hostBridge,
        ),
 diff --git a/src/tile/SpotlightTile.tsx b/src/tile/SpotlightTile.tsx
-index 97e1f4a623aec1515bdab4927d05c18939f58a7a..2925261d6f9064611b2d18c81b66f390d9bd5f06 100644
+index 97e1f4a..2925261 100644
 --- a/src/tile/SpotlightTile.tsx
 +++ b/src/tile/SpotlightTile.tsx
 @@ -9,6 +9,7 @@ import {
@@ -8328,7 +8774,7 @@ index 97e1f4a623aec1515bdab4927d05c18939f58a7a..2925261d6f9064611b2d18c81b66f390
              key={vm.id}
 diff --git a/src/state/media/ScreenShareSubscriptions.ts b/src/state/media/ScreenShareSubscriptions.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..128593591f4d650e84af054fe8054b74fe683b5e
+index 0000000..1285935
 --- /dev/null
 +++ b/src/state/media/ScreenShareSubscriptions.ts
 @@ -0,0 +1,132 @@
@@ -8466,7 +8912,7 @@ index 0000000000000000000000000000000000000000..128593591f4d650e84af054fe8054b74
 +}
 diff --git a/src/state/media/ScreenShareSubscriptions.test.ts b/src/state/media/ScreenShareSubscriptions.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..fb2ffd78b6b423d09ab17ffee180224df38800a2
+index 0000000..fb2ffd7
 --- /dev/null
 +++ b/src/state/media/ScreenShareSubscriptions.test.ts
 @@ -0,0 +1,183 @@
@@ -8655,7 +9101,7 @@ index 0000000000000000000000000000000000000000..fb2ffd78b6b423d09ab17ffee180224d
 +}
 diff --git a/src/state/media/RemoteMediaVolume.test.ts b/src/state/media/RemoteMediaVolume.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..b3f54b254c47c7259e60ab53e81d8660ace1864d
+index 0000000..b3f54b2
 --- /dev/null
 +++ b/src/state/media/RemoteMediaVolume.test.ts
 @@ -0,0 +1,186 @@
@@ -8846,7 +9292,7 @@ index 0000000000000000000000000000000000000000..b3f54b254c47c7259e60ab53e81d8660
 +  });
 +});
 diff --git a/src/livekit/openIDSFU.test.ts b/src/livekit/openIDSFU.test.ts
-index f759a3aac0c91ba82f1e9e8d89a0ba3c5468f974..bbd5281551f5a1d08de1047b0366e35a4a27c1c5 100644
+index f759a3a..bbd5281 100644
 --- a/src/livekit/openIDSFU.test.ts
 +++ b/src/livekit/openIDSFU.test.ts
 @@ -6,13 +6,13 @@ Please see LICENSE in the repository root for full details.
@@ -9614,7 +10060,7 @@ index f759a3aac0c91ba82f1e9e8d89a0ba3c5468f974..bbd5281551f5a1d08de1047b0366e35a
 +    return { logger, calls };
 +}
 diff --git a/src/livekit/openIDSFU.ts b/src/livekit/openIDSFU.ts
-index cf1f3c951be2a71a0d6373c79b372e6674d6c7ee..fb5dd1e2c341953b0f2843585dfe22bc13c52e7a 100644
+index cf1f3c9..fb5dd1e 100644
 --- a/src/livekit/openIDSFU.ts
 +++ b/src/livekit/openIDSFU.ts
 @@ -6,16 +6,16 @@ Please see LICENSE in the repository root for full details.
@@ -10140,7 +10586,7 @@ index cf1f3c951be2a71a0d6373c79b372e6674d6c7ee..fb5dd1e2c341953b0f2843585dfe22bc
 +    return await res.json();
  }
 diff --git a/src/state/CallViewModel/remoteMembers/Connection.test.ts b/src/state/CallViewModel/remoteMembers/Connection.test.ts
-index f226b77895a3f02b040f60c67174e0c085a12718..9f0e5355ca4b49477a04160e3af7f103548a4faa 100644
+index f226b77..9f0e535 100644
 --- a/src/state/CallViewModel/remoteMembers/Connection.test.ts
 +++ b/src/state/CallViewModel/remoteMembers/Connection.test.ts
 @@ -7,24 +7,24 @@ Please see LICENSE in the repository root for full details.
@@ -11476,7 +11922,7 @@ index f226b77895a3f02b040f60c67174e0c085a12718..9f0e5355ca4b49477a04160e3af7f103
  //
  // NOT USED ANYMORE ?
 diff --git a/src/state/CallViewModel/CallViewModel.test.ts b/src/state/CallViewModel/CallViewModel.test.ts
-index c7783d15259d624aea02c2ca387ee5c94dd90693..9994ce8a61c8508c4220667fef1fc99e7acaf527 100644
+index c7783d1..9994ce8 100644
 --- a/src/state/CallViewModel/CallViewModel.test.ts
 +++ b/src/state/CallViewModel/CallViewModel.test.ts
 @@ -8,76 +8,85 @@ Please see LICENSE in the repository root for full details.
@@ -15094,7 +15540,7 @@ index c7783d15259d624aea02c2ca387ee5c94dd90693..9994ce8a61c8508c4220667fef1fc99e
  });
 diff --git a/src/state/CallViewModel/connectionStatus.test.ts b/src/state/CallViewModel/connectionStatus.test.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..d64f89b5d5f4a521b690a2a0fc6871ccb33e7dc0
+index 0000000..d64f89b
 --- /dev/null
 +++ b/src/state/CallViewModel/connectionStatus.test.ts
 @@ -0,0 +1,350 @@
@@ -15450,7 +15896,7 @@ index 0000000000000000000000000000000000000000..d64f89b5d5f4a521b690a2a0fc6871cc
 +}
 diff --git a/src/state/CallViewModel/connectionStatus.ts b/src/state/CallViewModel/connectionStatus.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..994ddc7df5ea4965d62313bfe23e1031c6ca00dc
+index 0000000..994ddc7
 --- /dev/null
 +++ b/src/state/CallViewModel/connectionStatus.ts
 @@ -0,0 +1,125 @@
@@ -15580,7 +16026,7 @@ index 0000000000000000000000000000000000000000..994ddc7df5ea4965d62313bfe23e1031
 +    return scope.behavior(observable$, UNKNOWN);
 +}
 diff --git a/src/state/CallViewModel/remoteMembers/ConnectionManager.test.ts b/src/state/CallViewModel/remoteMembers/ConnectionManager.test.ts
-index 809c8bccbfd75a3ee471056eccddcb1cfc392fa6..605c0f57a98c31e8483547b68932469443490353 100644
+index 809c8bc..605c0f5 100644
 --- a/src/state/CallViewModel/remoteMembers/ConnectionManager.test.ts
 +++ b/src/state/CallViewModel/remoteMembers/ConnectionManager.test.ts
 @@ -13,25 +13,26 @@ import { logger } from "matrix-js-sdk/lib/logger";
@@ -16346,7 +16792,7 @@ index 809c8bccbfd75a3ee471056eccddcb1cfc392fa6..605c0f57a98c31e8483547b689324694
 -  });
  });
 diff --git a/src/state/CallViewModel/remoteMembers/ConnectionManager.ts b/src/state/CallViewModel/remoteMembers/ConnectionManager.ts
-index 5ebd2ce6de3dcaf035c25854a4ba5629a5e6a28b..89ade19e2db9016b5cdfaa72b211856dd5248ea5 100644
+index 5ebd2ce..89ade19 100644
 --- a/src/state/CallViewModel/remoteMembers/ConnectionManager.ts
 +++ b/src/state/CallViewModel/remoteMembers/ConnectionManager.ts
 @@ -19,75 +19,80 @@ import { generateItemsWithEpoch } from "../../../utils/observable.ts";
@@ -16786,7 +17232,7 @@ index 5ebd2ce6de3dcaf035c25854a4ba5629a5e6a28b..89ade19e2db9016b5cdfaa72b211856d
 +    }, [] as T[]);
  }
 diff --git a/locales/zh-Hans/app.json b/locales/zh-Hans/app.json
-index 55684bc8abe6bd1a78aec10c2e8d4688c935ef97..aa9722a3307bce3a9b3995869c16d9b6131e29ba 100644
+index 55684bc..ee91bb6 100644
 --- a/locales/zh-Hans/app.json
 +++ b/locales/zh-Hans/app.json
 @@ -55,6 +55,16 @@
@@ -16806,7 +17252,19 @@ index 55684bc8abe6bd1a78aec10c2e8d4688c935ef97..aa9722a3307bce3a9b3995869c16d9b6
    "developer_mode": {
      "always_show_iphone_earpiece": "在所有平台上显示 iPhone 听筒选项",
      "crypto_version": "加密组件版本：{{version}}",
-@@ -248,8 +258,13 @@
+@@ -115,6 +125,11 @@
+     "open_elsewhere_description": "{{brand}} 已在另一标签页中打开。如果这并非预期，请重载页面。",
+     "room_creation_restricted": "通话创建失败",
+     "room_creation_restricted_description": "可能仅限被授权的用户创建通话。请于稍候重试，或问题仍然存在的情况下联系服务器管理员。",
++    "screen_share_busy": "{{name}} 正在共享屏幕。对方停止后你才能共享。",
++    "screen_share_busy_unnamed": "其他人正在共享屏幕。对方停止后你才能共享。",
++    "screen_share_forbidden": "你没有在此通话中共享屏幕的权限。",
++    "screen_share_state_unknown": "尚未确认上一次屏幕共享已停止，请稍后再试。",
++    "screen_share_unavailable": "屏幕共享暂时不可用，语音连接不受影响。",
+     "unexpected_ec_error": "出现未知错误（<0>错误代码：</0><1>{{ errorCode }}</1>）。请联系服务器管理员。"
+   },
+   "group_call_loader": {
+@@ -248,8 +263,13 @@
      "expand": "展开",
      "mute_for_me": "为我静音",
      "muted_for_me": "为我静音",
@@ -16823,7 +17281,7 @@ index 55684bc8abe6bd1a78aec10c2e8d4688c935ef97..aa9722a3307bce3a9b3995869c16d9b6
  }
 diff --git a/playwright/connection-status.spec.ts b/playwright/connection-status.spec.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..1c3c5def639ab3f96ec40637e7761e388beebfd0
+index 0000000..1c3c5de
 --- /dev/null
 +++ b/playwright/connection-status.spec.ts
 @@ -0,0 +1,45 @@
@@ -16873,7 +17331,7 @@ index 0000000000000000000000000000000000000000..1c3c5def639ab3f96ec40637e7761e38
 +    await expect(status).toHaveCount(0);
 +});
 diff --git a/src/components/CallFooter.module.css b/src/components/CallFooter.module.css
-index e006a5f7d2daefaf8f6f1cdca7170cd20f0be061..4efe3a075c595d407093908907de4f60eb866f1b 100644
+index e006a5f..4efe3a0 100644
 --- a/src/components/CallFooter.module.css
 +++ b/src/components/CallFooter.module.css
 @@ -6,88 +6,110 @@ Please see LICENSE in the repository root for full details.
@@ -17151,7 +17609,7 @@ index e006a5f7d2daefaf8f6f1cdca7170cd20f0be061..4efe3a075c595d407093908907de4f60
 +    }
  }
 diff --git a/src/components/CallFooterViewModel.test.ts b/src/components/CallFooterViewModel.test.ts
-index 9e73393bec6b6c1bb14efdf71264a5025c86db0b..1a8e42358a6359e258cc8e5095870d0cc974381e 100644
+index 9e73393..1a8e423 100644
 --- a/src/components/CallFooterViewModel.test.ts
 +++ b/src/components/CallFooterViewModel.test.ts
 @@ -7,27 +7,32 @@ Please see LICENSE in the repository root for full details.
@@ -17516,7 +17974,7 @@ index 9e73393bec6b6c1bb14efdf71264a5025c86db0b..1a8e42358a6359e258cc8e5095870d0c
 -  });
  });
 diff --git a/src/room/__snapshots__/InCallView.test.tsx.snap b/src/room/__snapshots__/InCallView.test.tsx.snap
-index b7f8b3fe3f2d947a43e049722ad2a051ea390f82..e700027f0037e6fb13e97d0e7f2c2c44e2b7098a 100644
+index b7f8b3f..e700027 100644
 --- a/src/room/__snapshots__/InCallView.test.tsx.snap
 +++ b/src/room/__snapshots__/InCallView.test.tsx.snap
 @@ -165,9 +165,22 @@ exports[`InCallView > rendering > renders 1`] = `
@@ -17544,7 +18002,7 @@ index b7f8b3fe3f2d947a43e049722ad2a051ea390f82..e700027f0037e6fb13e97d0e7f2c2c44
          class="_settingsLogoContainer_20b7b4"
        >
 diff --git a/src/tile/SpotlightTile.module.css b/src/tile/SpotlightTile.module.css
-index 22f62a9b5413d120000e71a9865deeeaccf62792..785ec3c830eb767535b20aa8bd9ddc4c0feb4df5 100644
+index 22f62a9..785ec3c 100644
 --- a/src/tile/SpotlightTile.module.css
 +++ b/src/tile/SpotlightTile.module.css
 @@ -209,3 +209,29 @@ Please see LICENSE in the repository root for full details.
@@ -17578,7 +18036,7 @@ index 22f62a9b5413d120000e71a9865deeeaccf62792..785ec3c830eb767535b20aa8bd9ddc4c
 +  opacity: 1;
 +}
 diff --git a/src/tile/SpotlightTile.test.tsx b/src/tile/SpotlightTile.test.tsx
-index 854d853dbbe0cc850629f9d52b93a54f34010455..4cd97bdd933781a797a7738808cca3a671d3ac7c 100644
+index 854d853..4cd97bd 100644
 --- a/src/tile/SpotlightTile.test.tsx
 +++ b/src/tile/SpotlightTile.test.tsx
 @@ -214,3 +214,147 @@ test("SpotlightTile displays ringing media", async () => {
@@ -17834,3 +18292,355 @@ index 0000000..3bfb9df
 +    });
 +  },
 +);
+diff --git a/src/livekit/babacomShareLease.test.ts b/src/livekit/babacomShareLease.test.ts
+new file mode 100644
+index 0000000..399121d
+--- /dev/null
++++ b/src/livekit/babacomShareLease.test.ts
+@@ -0,0 +1,139 @@
++/*
++Copyright 2026 BabaCom
++
++SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
++Please see LICENSE in the repository root for full details.
++*/
++
++import { describe, expect, it, vi } from "vitest";
++
++import { BabaComShareLease, BabaComShareLeaseError } from "./babacomShareLease";
++
++const TARGET = {
++  serviceUrl: "https://rtc.example.org",
++  roomId: "!room:example.org",
++  slotId: "m.call#ROOM",
++  memberId: "member",
++  deviceId: "DEVICE",
++};
++const TOKEN = {
++  access_token: "token",
++  token_type: "Bearer",
++  matrix_server_name: "example.org",
++  expires_in: 3600,
++};
++
++function lease(response: () => Promise<Response>): {
++  lease: BabaComShareLease;
++  fetchFn: ReturnType<typeof vi.fn>;
++} {
++  const fetchFn = vi.fn(response);
++  return {
++    lease: new BabaComShareLease(
++      TARGET,
++      vi.fn().mockResolvedValue(TOKEN),
++      fetchFn,
++    ),
++    fetchFn,
++  };
++}
++
++const ok = async (): Promise<Response> =>
++  await Promise.resolve(
++    new Response(JSON.stringify({ state: "held" }), { status: 200 }),
++  );
++const error =
++  (status: number, errcode?: string) => async (): Promise<Response> =>
++    await Promise.resolve(
++      new Response(errcode ? JSON.stringify({ errcode }) : "not found", {
++        status,
++      }),
++    );
++
++describe("BabaComShareLease", () => {
++  it("claims with the member, device and attempt", async () => {
++    const { lease: shareLease, fetchFn } = lease(ok);
++    const attempt = shareLease.newAttempt();
++    await shareLease.claim(attempt, "@alice:example.org:DEVICE");
++    expect(shareLease.heldAttempt).toBe(attempt);
++    const [url, init] = fetchFn.mock.calls[0];
++    expect(url).toBe("https://rtc.example.org/babacom/share/claim");
++    expect(JSON.parse(init.body)).toEqual({
++      room_id: TARGET.roomId,
++      slot_id: TARGET.slotId,
++      member_id: TARGET.memberId,
++      device_id: TARGET.deviceId,
++      attempt_id: attempt,
++      livekit_identity: "@alice:example.org:DEVICE",
++      openid_token: TOKEN,
++    });
++  });
++
++  it("uses a new attempt ID each time", () => {
++    const { lease: shareLease } = lease(ok);
++    expect(shareLease.newAttempt()).not.toBe(shareLease.newAttempt());
++  });
++
++  it.each([
++    ["IO.BABACOM.SHARE_BUSY", 409, "busy"],
++    ["IO.BABACOM.SHARE_UNKNOWN", 409, "unknown"],
++    ["IO.BABACOM.NOT_IN_CALL", 409, "not_in_call"],
++    ["IO.BABACOM.SHARE_STALE", 409, "stale"],
++    ["IO.BABACOM.SFU_UNAVAILABLE", 503, "unavailable"],
++    ["M_FORBIDDEN", 403, "forbidden"],
++    ["M_UNKNOWN", 502, "unavailable"],
++  ])("maps %s to %s", async (errcode, status, failure) => {
++    const { lease: shareLease } = lease(error(status, errcode));
++    await expect(
++      shareLease.claim("a", "@alice:example.org:DEVICE"),
++    ).rejects.toEqual(new BabaComShareLeaseError(failure as never));
++    expect(shareLease.heldAttempt).toBeNull();
++  });
++
++  it("treats a service without the arbiter as unavailable", async () => {
++    const { lease: shareLease } = lease(error(404));
++    await expect(
++      shareLease.claim("a", "@alice:example.org:DEVICE"),
++    ).rejects.toMatchObject({
++      failure: "unavailable",
++    });
++  });
++
++  it("treats a network failure as unavailable", async () => {
++    const { lease: shareLease } = lease(async () => {
++      await Promise.resolve();
++      throw new TypeError("Failed to fetch");
++    });
++    await expect(
++      shareLease.claim("a", "@alice:example.org:DEVICE"),
++    ).rejects.toMatchObject({
++      failure: "unavailable",
++    });
++  });
++
++  it("releases the held attempt", async () => {
++    const { lease: shareLease, fetchFn } = lease(ok);
++    await shareLease.claim("a", "@alice:example.org:DEVICE");
++    await shareLease.release("a");
++    expect(shareLease.heldAttempt).toBeNull();
++    expect(fetchFn.mock.calls[1][0]).toBe(
++      "https://rtc.example.org/babacom/share/release",
++    );
++    // The release names the same participant as the claim.
++    expect(JSON.parse(fetchFn.mock.calls[1][1].body).livekit_identity).toBe(
++      "@alice:example.org:DEVICE",
++    );
++  });
++
++  it("counts a stale release as released", async () => {
++    const { lease: shareLease } = lease(error(409, "IO.BABACOM.SHARE_STALE"));
++    await expect(shareLease.release("a")).resolves.toBeUndefined();
++  });
++
++  it("reports other release failures", async () => {
++    const { lease: shareLease } = lease(error(409, "IO.BABACOM.SHARE_UNKNOWN"));
++    await expect(shareLease.release("a")).rejects.toMatchObject({
++      failure: "unknown",
++    });
++  });
++});
+diff --git a/src/livekit/babacomShareLease.ts b/src/livekit/babacomShareLease.ts
+new file mode 100644
+index 0000000..46e1b63
+--- /dev/null
++++ b/src/livekit/babacomShareLease.ts
+@@ -0,0 +1,144 @@
++/*
++Copyright 2026 BabaCom
++
++SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
++Please see LICENSE in the repository root for full details.
++*/
++
++import { type IOpenIDToken } from "matrix-js-sdk";
++import { secureRandomString } from "matrix-js-sdk/lib/randomstring";
++
++/** Why the authorization service refused or could not handle a share request. */
++export type BabaComShareLeaseFailure =
++  /** Another participant holds the screen share. */
++  | "busy"
++  /** The service cannot confirm that the previous share has stopped. */
++  | "unknown"
++  /** This participant is not connected to the call's SFU. */
++  | "not_in_call"
++  /** Matrix does not allow this participant to publish. */
++  | "forbidden"
++  /** The request belongs to a share attempt that has already ended. */
++  | "stale"
++  /** The service or SFU could not be reached, or does not arbitrate sharing. */
++  | "unavailable";
++
++/** Raised when the authorization service does not grant a screen share. */
++export class BabaComShareLeaseError extends Error {
++  public constructor(public readonly failure: BabaComShareLeaseFailure) {
++    super(`Screen share lease refused: ${failure}`);
++    this.name = "BabaComShareLeaseError";
++  }
++}
++
++const FAILURES: Record<string, BabaComShareLeaseFailure> = {
++  "IO.BABACOM.SHARE_BUSY": "busy",
++  "IO.BABACOM.SHARE_UNKNOWN": "unknown",
++  "IO.BABACOM.NOT_IN_CALL": "not_in_call",
++  "IO.BABACOM.SHARE_STALE": "stale",
++  "IO.BABACOM.SFU_UNAVAILABLE": "unavailable",
++  M_FORBIDDEN: "forbidden",
++};
++
++export interface BabaComShareLeaseTarget {
++  /** Base URL of the MatrixRTC authorization service (`livekit_service_url`). */
++  serviceUrl: string;
++  roomId: string;
++  slotId: string;
++  memberId: string;
++  deviceId: string;
++}
++
++/**
++ * Claims and releases this participant's screen-share lease. The service, not
++ * this client, decides who may share: it adds or removes the screen sources on
++ * the SFU, so the result of a claim is the only permission that counts.
++ */
++export class BabaComShareLease {
++  private held: string | null = null;
++  /** The LiveKit identity each open attempt was claimed for. */
++  private readonly identities = new Map<string, string>();
++
++  public constructor(
++    private readonly target: BabaComShareLeaseTarget,
++    private readonly getOpenIdToken: () => Promise<IOpenIDToken>,
++    private readonly fetchFn: typeof fetch = async (...args) =>
++      await fetch(...args),
++  ) {}
++
++  /** The authorization service this lease belongs to. */
++  public get serviceUrl(): string {
++    return this.target.serviceUrl;
++  }
++
++  /** Starts a new share attempt. Each attempt is claimed and released once. */
++  public newAttempt(): string {
++    return secureRandomString(24);
++  }
++
++  /** The attempt whose claim succeeded and has not been released. */
++  public get heldAttempt(): string | null {
++    return this.held;
++  }
++
++  /**
++   * Asks the service for the room's screen share for the LiveKit participant
++   * this client is connected as. Throws when refused.
++   */
++  public async claim(attempt: string, livekitIdentity: string): Promise<void> {
++    this.identities.set(attempt, livekitIdentity);
++    await this.post("claim", attempt);
++    this.held = attempt;
++  }
++
++  /**
++   * Gives the screen share back. A stale attempt has already ended on the
++   * service, so it counts as released.
++   */
++  public async release(attempt: string): Promise<void> {
++    if (this.held === attempt) this.held = null;
++    try {
++      await this.post("release", attempt);
++    } catch (e) {
++      if (e instanceof BabaComShareLeaseError && e.failure === "stale") return;
++      throw e;
++    } finally {
++      this.identities.delete(attempt);
++    }
++  }
++
++  private async post(
++    action: "claim" | "release",
++    attempt: string,
++  ): Promise<void> {
++    const { serviceUrl, roomId, slotId, memberId, deviceId } = this.target;
++    let response: Response;
++    try {
++      response = await this.fetchFn(`${serviceUrl}/babacom/share/${action}`, {
++        method: "POST",
++        headers: { "Content-Type": "application/json" },
++        body: JSON.stringify({
++          room_id: roomId,
++          slot_id: slotId,
++          member_id: memberId,
++          device_id: deviceId,
++          attempt_id: attempt,
++          livekit_identity: this.identities.get(attempt),
++          openid_token: await this.getOpenIdToken(),
++        }),
++      });
++    } catch {
++      throw new BabaComShareLeaseError("unavailable");
++    }
++    if (response.ok) return;
++    let errcode: unknown;
++    try {
++      errcode = ((await response.json()) as { errcode?: unknown }).errcode;
++    } catch {
++      // Not a Matrix error body, e.g. a 404 from a service without the arbiter.
++    }
++    throw new BabaComShareLeaseError(
++      (typeof errcode === "string" && FAILURES[errcode]) || "unavailable",
++    );
++  }
++}
+diff --git a/src/room/screenShareErrorMessage.test.ts b/src/room/screenShareErrorMessage.test.ts
+new file mode 100644
+index 0000000..2685a92
+--- /dev/null
++++ b/src/room/screenShareErrorMessage.test.ts
+@@ -0,0 +1,51 @@
++/*
++Copyright 2026 BabaCom
++
++SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
++Please see LICENSE in the repository root for full details.
++*/
++
++import { describe, expect, it } from "vitest";
++import { type TFunction } from "i18next";
++
++import { screenShareErrorMessage } from "./InCallView";
++import { BabaComShareLeaseError } from "../livekit/babacomShareLease";
++import { BabaComSystemAudioError } from "../state/CallViewModel/localMember/LocalMember";
++
++const t = ((key: string, options?: { name?: string }) =>
++  options?.name ? `${key}:${options.name}` : key) as unknown as TFunction;
++
++describe("screenShareErrorMessage", () => {
++  it("names the participant who holds the share", () => {
++    expect(
++      screenShareErrorMessage(new BabaComShareLeaseError("busy"), "Bob", t),
++    ).toBe("error.screen_share_busy:Bob");
++  });
++
++  it("falls back when the holder is not visible yet", () => {
++    expect(
++      screenShareErrorMessage(new BabaComShareLeaseError("busy"), null, t),
++    ).toBe("error.screen_share_busy_unnamed");
++  });
++
++  it.each([
++    ["unknown", "error.screen_share_state_unknown"],
++    ["forbidden", "error.screen_share_forbidden"],
++    ["unavailable", "error.screen_share_unavailable"],
++    ["not_in_call", "error.screen_share_unavailable"],
++    ["stale", "error.screen_share_unavailable"],
++  ] as const)("explains %s", (failure, key) => {
++    expect(
++      screenShareErrorMessage(new BabaComShareLeaseError(failure), null, t),
++    ).toBe(key);
++  });
++
++  it("keeps the existing messages", () => {
++    expect(
++      screenShareErrorMessage(new BabaComSystemAudioError(), null, t),
++    ).toBe("error.screen_share_system_audio_unsafe");
++    expect(screenShareErrorMessage(new Error("x"), null, t)).toBe(
++      "error.screen_share_failed",
++    );
++  });
++});

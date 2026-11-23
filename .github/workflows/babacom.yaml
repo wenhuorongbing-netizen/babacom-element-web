@@ -10,6 +10,9 @@ concurrency:
     cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
     NX_DEFAULT_OUTPUT_STYLE: stream-without-prefixes
+    # The MatrixRTC authorization service with BabaCom's screen-share arbiter: a pinned commit of the
+    # babacom-lk-jwt-service fork, which the patched Element Call's share lease talks to. Update it with the client.
+    BABACOM_LK_JWT_SHA: a855bc1eba2dcdc899d2d86b380c1c713acb5cdb
 permissions: {} # No permissions required
 jobs:
     build-and-e2e:
@@ -53,17 +56,29 @@ jobs:
                   cp config.babacom.json config.json
                   pnpm run build
 
+            - name: Build BabaCom lk-jwt-service image
+              run: |
+                  src="$RUNNER_TEMP/babacom-lk-jwt-service"
+                  git init -q "$src"
+                  git -C "$src" fetch -q --depth 1 \
+                      https://github.com/wenhuorongbing-netizen/babacom-lk-jwt-service.git "$BABACOM_LK_JWT_SHA"
+                  test "$(git -C "$src" rev-parse FETCH_HEAD)" = "$BABACOM_LK_JWT_SHA"
+                  git -C "$src" archive --format=tar FETCH_HEAD | docker build -q -t "babacom-lk-jwt-service:$BABACOM_LK_JWT_SHA" -
+
             - uses: ./.github/actions/setup-playwright
               with:
                   write-cache: true
 
-            # test:playwright also builds the shared Playwright helpers (packages/playwright-common) first
+            # test:playwright also builds the shared Playwright helpers (packages/playwright-common) first.
+            # The call specs run against the arbiter-enabled service, so they also cover the identities it issues.
             - name: Run BabaCom end-to-end tests
               working-directory: apps/web
-              run: >
-                  pnpm test:playwright --project=Chrome
-                  playwright/e2e/voip/babacom-voice-controls.spec.ts
-                  playwright/e2e/login/babacom-translations.spec.ts
+              run: |
+                  export BABACOM_LK_JWT_IMAGE="babacom-lk-jwt-service:$BABACOM_LK_JWT_SHA"
+                  pnpm test:playwright --project=Chrome \
+                      playwright/e2e/voip/babacom-voice-controls.spec.ts \
+                      playwright/e2e/voip/babacom-screen-share.spec.ts \
+                      playwright/e2e/login/babacom-translations.spec.ts
 
             - name: Upload BabaCom web app
               uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
