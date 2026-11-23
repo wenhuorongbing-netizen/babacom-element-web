@@ -7181,7 +7181,7 @@ index 6df999b..cb4e493 100644
    });
  });
 diff --git a/src/state/CallViewModel/localMember/LocalMember.ts b/src/state/CallViewModel/localMember/LocalMember.ts
-index 7303946..45594ae 100644
+index 7303946..4273fb5 100644
 --- a/src/state/CallViewModel/localMember/LocalMember.ts
 +++ b/src/state/CallViewModel/localMember/LocalMember.ts
 @@ -9,6 +9,8 @@ import {
@@ -7562,7 +7562,7 @@ index 7303946..45594ae 100644
 +    // Claim even if the user cancels meanwhile, so the release that follows
 +    // closes this attempt on the service.
 +    claimed = true;
-+    await lease.claim(attempt);
++    await lease.claim(attempt, participant.identity);
 +    if (!captureIsLive()) return;
 +    await waitForScreenSharePermission(participant, signal);
 +    if (!captureIsLive()) return;
@@ -18294,10 +18294,10 @@ index 0000000..3bfb9df
 +);
 diff --git a/src/livekit/babacomShareLease.test.ts b/src/livekit/babacomShareLease.test.ts
 new file mode 100644
-index 0000000..fa184af
+index 0000000..399121d
 --- /dev/null
 +++ b/src/livekit/babacomShareLease.test.ts
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,139 @@
 +/*
 +Copyright 2026 BabaCom
 +
@@ -18354,7 +18354,7 @@ index 0000000..fa184af
 +  it("claims with the member, device and attempt", async () => {
 +    const { lease: shareLease, fetchFn } = lease(ok);
 +    const attempt = shareLease.newAttempt();
-+    await shareLease.claim(attempt);
++    await shareLease.claim(attempt, "@alice:example.org:DEVICE");
 +    expect(shareLease.heldAttempt).toBe(attempt);
 +    const [url, init] = fetchFn.mock.calls[0];
 +    expect(url).toBe("https://rtc.example.org/babacom/share/claim");
@@ -18364,6 +18364,7 @@ index 0000000..fa184af
 +      member_id: TARGET.memberId,
 +      device_id: TARGET.deviceId,
 +      attempt_id: attempt,
++      livekit_identity: "@alice:example.org:DEVICE",
 +      openid_token: TOKEN,
 +    });
 +  });
@@ -18383,15 +18384,17 @@ index 0000000..fa184af
 +    ["M_UNKNOWN", 502, "unavailable"],
 +  ])("maps %s to %s", async (errcode, status, failure) => {
 +    const { lease: shareLease } = lease(error(status, errcode));
-+    await expect(shareLease.claim("a")).rejects.toEqual(
-+      new BabaComShareLeaseError(failure as never),
-+    );
++    await expect(
++      shareLease.claim("a", "@alice:example.org:DEVICE"),
++    ).rejects.toEqual(new BabaComShareLeaseError(failure as never));
 +    expect(shareLease.heldAttempt).toBeNull();
 +  });
 +
 +  it("treats a service without the arbiter as unavailable", async () => {
 +    const { lease: shareLease } = lease(error(404));
-+    await expect(shareLease.claim("a")).rejects.toMatchObject({
++    await expect(
++      shareLease.claim("a", "@alice:example.org:DEVICE"),
++    ).rejects.toMatchObject({
 +      failure: "unavailable",
 +    });
 +  });
@@ -18401,18 +18404,24 @@ index 0000000..fa184af
 +      await Promise.resolve();
 +      throw new TypeError("Failed to fetch");
 +    });
-+    await expect(shareLease.claim("a")).rejects.toMatchObject({
++    await expect(
++      shareLease.claim("a", "@alice:example.org:DEVICE"),
++    ).rejects.toMatchObject({
 +      failure: "unavailable",
 +    });
 +  });
 +
 +  it("releases the held attempt", async () => {
 +    const { lease: shareLease, fetchFn } = lease(ok);
-+    await shareLease.claim("a");
++    await shareLease.claim("a", "@alice:example.org:DEVICE");
 +    await shareLease.release("a");
 +    expect(shareLease.heldAttempt).toBeNull();
 +    expect(fetchFn.mock.calls[1][0]).toBe(
 +      "https://rtc.example.org/babacom/share/release",
++    );
++    // The release names the same participant as the claim.
++    expect(JSON.parse(fetchFn.mock.calls[1][1].body).livekit_identity).toBe(
++      "@alice:example.org:DEVICE",
 +    );
 +  });
 +
@@ -18430,10 +18439,10 @@ index 0000000..fa184af
 +});
 diff --git a/src/livekit/babacomShareLease.ts b/src/livekit/babacomShareLease.ts
 new file mode 100644
-index 0000000..a051e5d
+index 0000000..46e1b63
 --- /dev/null
 +++ b/src/livekit/babacomShareLease.ts
-@@ -0,0 +1,135 @@
+@@ -0,0 +1,144 @@
 +/*
 +Copyright 2026 BabaCom
 +
@@ -18492,6 +18501,8 @@ index 0000000..a051e5d
 + */
 +export class BabaComShareLease {
 +  private held: string | null = null;
++  /** The LiveKit identity each open attempt was claimed for. */
++  private readonly identities = new Map<string, string>();
 +
 +  public constructor(
 +    private readonly target: BabaComShareLeaseTarget,
@@ -18515,8 +18526,12 @@ index 0000000..a051e5d
 +    return this.held;
 +  }
 +
-+  /** Asks the service for the room's screen share. Throws when refused. */
-+  public async claim(attempt: string): Promise<void> {
++  /**
++   * Asks the service for the room's screen share for the LiveKit participant
++   * this client is connected as. Throws when refused.
++   */
++  public async claim(attempt: string, livekitIdentity: string): Promise<void> {
++    this.identities.set(attempt, livekitIdentity);
 +    await this.post("claim", attempt);
 +    this.held = attempt;
 +  }
@@ -18532,6 +18547,8 @@ index 0000000..a051e5d
 +    } catch (e) {
 +      if (e instanceof BabaComShareLeaseError && e.failure === "stale") return;
 +      throw e;
++    } finally {
++      this.identities.delete(attempt);
 +    }
 +  }
 +
@@ -18551,6 +18568,7 @@ index 0000000..a051e5d
 +          member_id: memberId,
 +          device_id: deviceId,
 +          attempt_id: attempt,
++          livekit_identity: this.identities.get(attempt),
 +          openid_token: await this.getOpenIdToken(),
 +        }),
 +      });
